@@ -8,3 +8,6 @@ dist/
 coverage/
 firebase-debug.log
 ui-debug.log
+# Public (browser-safe) frontend config is committed; secrets never are.
+!frontend/.env.development
+!frontend/.env.production

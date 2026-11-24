@@ -90,6 +90,10 @@ export default function App() {
     return <ConfigError title="Firebase is not configured"
       message="Set the VITE_FIREBASE_* variables in frontend/.env (see .env.example) and restart the app." />
   }
+  if (import.meta.env.PROD && !import.meta.env.VITE_API_BASE_URL) {
+    return <ConfigError title="Backend URL is not configured"
+      message="Set VITE_API_BASE_URL to the deployed backend URL (Vercel: Project Settings → Environment Variables) and redeploy." />
+  }
   if (statusError) {
     return <ConfigError title="Cannot reach the POS server" message={statusError.message} onRetry={refreshSetupStatus} />
   }
