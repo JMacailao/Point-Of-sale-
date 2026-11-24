@@ -29,8 +29,13 @@ begin
 end $$;
 grant usage on schema test_helpers to authenticated, anon, service_role;
 grant execute on all functions in schema test_helpers to authenticated, anon, service_role;
+create or replace function test_helpers.claims(p_uid text)
+returns text language sql as $$
+  select json_build_object('sub', p_uid, 'iss', 'https://securetoken.google.com/' || app.firebase_project_id(),
+                           'aud', app.firebase_project_id(), 'email', p_uid || '@example.com')::text $$;
+grant execute on function test_helpers.claims(text) to anon, authenticated, service_role;
 create table test_helpers.vars (k text primary key, v text);
-grant all on test_helpers.vars to authenticated;
+grant all on test_helpers.vars to authenticated, anon;
 
 \echo '1. initial administrator claim is atomic and single-use'
 set role service_role;
@@ -40,16 +45,28 @@ reset role;
 select test_helpers.assert((select count(*) = 1 from profiles), 'exactly one profile after claim');
 select test_helpers.assert((select email = 'admin@example.com' from profiles), 'email normalized');
 
-\echo '2. anon and authenticated cannot claim admin or read system settings'
+\echo '2. requests without a valid Firebase token see nothing and cannot claim admin'
 begin;
 set local role anon;
 select test_helpers.expect_error($$select public.claim_initial_admin('a','b@c.de')$$, 'permission denied');
-select test_helpers.expect_error($$select * from public.products$$, 'permission denied');
+select test_helpers.expect_error($$select public.claim_initial_admin_self()$$, 'NOT_AUTHENTICATED');
+select test_helpers.expect_error($$select * from public.system_settings$$, 'permission denied');
+select test_helpers.expect_error($$select public.get_my_context()$$, 'NOT_AUTHENTICATED');
+select test_helpers.assert((select count(*) = 0 from public.profiles), 'no profiles without token');
+select test_helpers.assert((public.get_setup_status() ->> 'adminClaimed')::boolean, 'public setup status works');
+rollback;
+-- a token from ANOTHER Firebase project is ignored
+begin;
+select set_config('request.jwt.claims', '{"sub":"uid-admin","iss":"https://securetoken.google.com/other-project","aud":"other-project"}', true);
+set local role anon;
+select test_helpers.assert((select count(*) = 0 from public.profiles), 'foreign-project token sees nothing');
+select test_helpers.expect_error($$select public.get_my_context()$$, 'NOT_AUTHENTICATED');
 rollback;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 select test_helpers.expect_error($$select public.claim_initial_admin('a','b@c.de')$$, 'permission denied');
+select test_helpers.expect_error($$select public.claim_initial_admin_self()$$, 'SETUP_ALREADY_CLAIMED');
 select test_helpers.expect_error($$select * from public.system_settings$$, 'permission denied');
 rollback;
 
@@ -58,13 +75,13 @@ begin;
 insert into profiles (firebase_uid, email) values ('uid-stranger', 'stranger@example.com');
 commit;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-stranger"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-stranger'), true);
+set local role anon;
 select test_helpers.expect_error($$select public.complete_store_setup('{"store_name":"Evil"}')$$, 'FORBIDDEN');
 rollback;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 select test_helpers.expect_error($$select public.complete_store_setup('{"store_name":"  "}')$$, 'VALIDATION');
 select test_helpers.expect_error($$select public.complete_store_setup('{"store_name":"A","timezone":"Mars/Base"}')$$, 'VALIDATION');
 insert into test_helpers.vars values ('store1', public.complete_store_setup(
@@ -75,8 +92,8 @@ select test_helpers.assert((select setup_completed from system_settings), 'setup
 
 \echo '4. product creation under RLS; stock cannot be written directly'
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 insert into categories (store_id, name) select v::uuid, 'Drinks' from test_helpers.vars where k = 'store1';
 insert into products (store_id, category_id, name, sku, barcode, cost_price, selling_price, minimum_stock)
 select v::uuid, (select id from categories where name = 'Drinks'), 'Cola 330ml', 'COLA-330', '4800000000017', 12.50, 20.00, 5
@@ -94,8 +111,8 @@ select test_helpers.expect_error($$update products set stock_quantity = 5$$, 'ST
 
 \echo '5. stock in / out / adjustment record movements and prevent negatives'
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 select public.adjust_stock(s.v::uuid, p.id, 'stock_in', 50, 'Initial stock') from test_helpers.vars s, products p where s.k='store1' and p.sku='COLA-330';
 select public.adjust_stock(s.v::uuid, p.id, 'stock_in', 10, null) from test_helpers.vars s, products p where s.k='store1' and p.sku='BREAD';
 select public.adjust_stock(s.v::uuid, p.id, 'stock_out', 5, 'Damaged') from test_helpers.vars s, products p where s.k='store1' and p.sku='COLA-330';
@@ -109,15 +126,15 @@ commit;
 
 \echo '6. cashier: create via users.manage, limited permissions'
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 select public.create_store_member(v::uuid, 'uid-cashier', 'cashier@example.com', 'Carl Cashier', 'cashier') from test_helpers.vars where k='store1';
 select public.create_store_member(v::uuid, 'uid-cashier2', 'cashier2@example.com', 'Cora Cashier', 'cashier') from test_helpers.vars where k='store1';
 select test_helpers.expect_error($$select public.create_store_member(v::uuid, 'uid-cashier', 'cashier@example.com', 'Carl', 'cashier') from test_helpers.vars where k='store1'$$, 'CONFLICT');
 commit;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-cashier"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier'), true);
+set local role anon;
 select test_helpers.assert((select count(*) = 2 from products), 'cashier can view products');
 select test_helpers.expect_error($$select public.create_store_member(v::uuid, 'uid-evil', 'evil@example.com', 'Evil', 'administrator') from test_helpers.vars where k='store1'$$, 'FORBIDDEN');
 select test_helpers.expect_error($$select public.update_store_member(v::uuid, (select id from profiles where firebase_uid='uid-cashier'), null, 'administrator', null) from test_helpers.vars where k='store1'$$, 'FORBIDDEN');
@@ -133,8 +150,8 @@ rollback;
 
 \echo '7. process_sale: totals, change, stock deduction, idempotency'
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-cashier"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier'), true);
+set local role anon;
 -- 3 x Cola (20.00) + 2 x Bread (45.50) = 151.00, cash 200 -> change 49.00
 insert into test_helpers.vars select 'sale1', public.process_sale(
   s.v::uuid, '11111111-1111-1111-1111-111111111111',
@@ -162,8 +179,8 @@ select test_helpers.assert((select count(*) = 2 from stock_movements where movem
 
 \echo '8. sale validation: overselling, payments, unauthorized discounts'
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-cashier"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier'), true);
+set local role anon;
 select test_helpers.expect_error(format($$select public.process_sale(%L, gen_random_uuid(), jsonb_build_array(jsonb_build_object('product_id', %L, 'quantity', 9)), 'none', 0, 'cash', 1000, null)$$,
   (select v from test_helpers.vars where k='store1'), (select id from products where sku='BREAD')), 'INSUFFICIENT_STOCK');
 select test_helpers.expect_error(format($$select public.process_sale(%L, gen_random_uuid(), jsonb_build_array(jsonb_build_object('product_id', %L, 'quantity', 1)), 'none', 0, 'cash', 10, null)$$,
@@ -182,8 +199,8 @@ rollback;
 -- e-wallet with reference, admin discount (10%%) and tax exclusive 12%%
 update stores set tax_enabled = true, tax_inclusive = false, tax_rate = 12;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 -- 5 x Cola = 100.00, 10% => 90.00, tax 12% => 10.80, total 100.80
 insert into test_helpers.vars select 'sale2', public.process_sale(s.v::uuid, gen_random_uuid(),
   jsonb_build_array(jsonb_build_object('product_id', (select id from products where sku='COLA-330'), 'quantity', 5)),
@@ -195,8 +212,8 @@ select test_helpers.assert((select count(*) = 2 from sales), 'admin sees all sal
 commit;
 update stores set tax_enabled = true, tax_inclusive = true, tax_rate = 12, allow_cashier_discount = true, max_discount_percent = 5;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-cashier2"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier2'), true);
+set local role anon;
 select test_helpers.expect_error(format($$select public.process_sale(%L, gen_random_uuid(), jsonb_build_array(jsonb_build_object('product_id', %L, 'quantity', 1)), 'percent', 6, 'cash', 100, null)$$,
   (select v from test_helpers.vars where k='store1'), (select id from products where sku='COLA-330')), 'DISCOUNT_NOT_AUTHORIZED');
 -- 2 x Bread = 91.00, 1.00 off (allowed, < 5%) => 90.00, inclusive VAT = 9.64
@@ -216,14 +233,14 @@ select test_helpers.expect_error($$delete from sales$$, 'IMMUTABLE_RECORD');
 select test_helpers.expect_error($$delete from stock_movements$$, 'IMMUTABLE_RECORD');
 select test_helpers.expect_error($$update audit_logs set action = 'x'$$, 'IMMUTABLE_RECORD');
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-cashier"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier'), true);
+set local role anon;
 select test_helpers.expect_error(format($$select public.refund_sale(%L, %L, 'customer changed mind')$$,
   (select v from test_helpers.vars where k='store1'), (select v from test_helpers.vars where k='sale1')), 'FORBIDDEN');
 rollback;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 select public.refund_sale(s.v::uuid, x.v::uuid, 'Customer returned items') from test_helpers.vars s, test_helpers.vars x where s.k='store1' and x.k='sale1';
 select test_helpers.expect_error(format($$select public.refund_sale(%L, %L, 'again')$$,
   (select v from test_helpers.vars where k='store1'), (select v from test_helpers.vars where k='sale1')), 'ALREADY_REFUNDED');
@@ -235,8 +252,8 @@ select test_helpers.assert((select amount = -151 from payments where kind = 'ref
 
 \echo '10. reports separate revenue and profit'
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 insert into expenses (store_id, description, category, amount, recorded_by)
 select v::uuid, 'Electricity', 'utilities', 50, (select id from profiles where firebase_uid='uid-admin') from test_helpers.vars where k='store1';
 select test_helpers.expect_error($$insert into expenses (store_id, description, category, amount, recorded_by)
@@ -252,8 +269,8 @@ select test_helpers.assert((select (v::jsonb -> 'totals' ->> 'cost_of_goods')::n
 select test_helpers.assert((select (v::jsonb -> 'totals' ->> 'gross_profit')::numeric = 190.80 - 20.44 - 122.50 from test_helpers.vars where k='report'), 'gross profit');
 select test_helpers.assert((select (v::jsonb -> 'totals' ->> 'net_profit')::numeric = 190.80 - 20.44 - 122.50 - 50 from test_helpers.vars where k='report'), 'net profit');
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-cashier"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier'), true);
+set local role anon;
 select test_helpers.expect_error(format($$select public.sales_report(%L, current_date, current_date, 'day')$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
 -- cashier dashboard only counts own (refunded) sale
 select test_helpers.assert((public.dashboard_summary(v::uuid, current_date - 1, current_date + 1) ->> 'transactions')::int = 0, 'cashier dashboard scoped to own sales') from test_helpers.vars where k='store1';
@@ -261,8 +278,8 @@ rollback;
 
 \echo '11. role protections: self-modification and last administrator'
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 select test_helpers.expect_error(format($$select public.update_store_member(%L, %L, null, 'cashier', null)$$,
   (select v from test_helpers.vars where k='store1'), (select id from profiles where firebase_uid='uid-admin')), 'SELF_MODIFICATION');
 select test_helpers.expect_error(format($$select public.update_store_member(%L, %L, null, null, false)$$,
@@ -271,21 +288,21 @@ select test_helpers.expect_error(format($$select public.update_store_member(%L, 
 select public.update_store_member(s.v::uuid, p.id, null, null, false) from test_helpers.vars s, profiles p where s.k='store1' and p.firebase_uid='uid-cashier2';
 commit;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-cashier2"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier2'), true);
+set local role anon;
 select test_helpers.assert((select count(*) = 0 from products), 'inactive user sees nothing');
 select test_helpers.expect_error(format($$select public.process_sale(%L, gen_random_uuid(), jsonb_build_array(jsonb_build_object('product_id', %L, 'quantity', 1)), 'none', 0, 'cash', 100, null)$$,
   (select v from test_helpers.vars where k='store1'), (select id from products where sku='COLA-330')), 'NOT_AUTHENTICATED');
 rollback;
 -- promote cashier to admin, then the original admin may be demoted by them
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-admin"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
 select public.update_store_member(s.v::uuid, p.id, null, 'administrator', null) from test_helpers.vars s, profiles p where s.k='store1' and p.firebase_uid='uid-cashier';
 commit;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-cashier"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier'), true);
+set local role anon;
 select public.update_store_member(s.v::uuid, p.id, null, 'cashier', null) from test_helpers.vars s, profiles p where s.k='store1' and p.firebase_uid='uid-admin';
 rollback;
 
@@ -297,8 +314,8 @@ select s.id, p.id, r.id from stores s, profiles p, roles r
 where s.store_name = 'Other Store' and p.firebase_uid = 'uid-other' and r.key = 'administrator';
 insert into test_helpers.vars select 'cat1', c.id::text from categories c join test_helpers.vars v on v.k = 'store1' and c.store_id = v.v::uuid limit 1;
 begin;
-select set_config('request.jwt.claims', '{"sub":"uid-other"}', true);
-set local role authenticated;
+select set_config('request.jwt.claims', test_helpers.claims('uid-other'), true);
+set local role anon;
 select test_helpers.assert((select count(*) = 1 from stores), 'other admin sees only own store');
 select test_helpers.assert((select count(*) = 0 from products), 'no foreign products');
 select test_helpers.assert((select count(*) = 0 from sales), 'no foreign sales');
