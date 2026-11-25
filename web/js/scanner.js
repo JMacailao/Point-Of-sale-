@@ -3,7 +3,8 @@
 // otherwise loads the ZXing decoder from a CDN on first use. Requires HTTPS (or localhost).
 import { esc, icon, openModal, toast } from './util.js'
 
-const ZXING_URL = 'https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/zxing-browser.min.js'
+// ZXing @zxing/browser 0.1.5 (MIT), bundled in web/vendor so scanning works without a CDN.
+const ZXING_URL = new URL('../vendor/zxing-browser.min.js', import.meta.url).href
 const FORMATS = ['ean_13', 'ean_8', 'upc_a', 'upc_e', 'code_128', 'code_39', 'code_93', 'itf', 'codabar', 'qr_code', 'data_matrix']
 
 const pref = {
@@ -19,9 +20,8 @@ function loadZxing() {
   zxingLoad ||= new Promise((resolve, reject) => {
     const s = document.createElement('script')
     s.src = ZXING_URL
-    s.crossOrigin = 'anonymous'
     s.onload = () => resolve(window.ZXingBrowser)
-    s.onerror = () => { zxingLoad = null; reject(new Error('Could not load the barcode reader. Check your internet connection.')) }
+    s.onerror = () => { zxingLoad = null; reject(new Error('Could not load the barcode reader.')) }
     document.head.appendChild(s)
   })
   return zxingLoad

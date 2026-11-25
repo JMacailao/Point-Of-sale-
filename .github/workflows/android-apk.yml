@@ -1,0 +1,58 @@
+# Builds the Android app (android-app/, which packages web/) and publishes the APK
+# as a downloadable file on the repository's Releases page ("apk-latest").
+name: Build Android APK
+
+on:
+  push:
+    branches: [main, claude/practical-goodall-lq98ur]
+    paths: ['web/**', 'android-app/**', '.github/workflows/android-apk.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-apk
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: android-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: android-app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+      - name: Install Capacitor and copy the web app
+        run: |
+          npm ci
+          npm run sync
+      - name: Build APK
+        run: |
+          chmod +x android/gradlew
+          cd android
+          ./gradlew assembleDebug --no-daemon --stacktrace
+          cp app/build/outputs/apk/debug/app-debug.apk "$GITHUB_WORKSPACE/POS-System.apk"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: POS-System-apk
+          path: POS-System.apk
+      - name: Publish download link (Releases > apk-latest)
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete apk-latest --cleanup-tag --yes || true
+          gh release create apk-latest POS-System.apk --prerelease --target "$GITHUB_SHA" \
+            --title "POS System – Android app (latest build)" \
+            --notes "Install on Android: download POS-System.apk, open it, and allow installing from this source. Built from commit $GITHUB_SHA."

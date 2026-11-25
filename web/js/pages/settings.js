@@ -4,7 +4,8 @@ import { pageHead } from '../layout.js'
 import { changePassword, firebaseMessage } from '../firebase.js'
 import { printReceipt } from '../receipt.js'
 import { openCameraScanner, cameraSupported } from '../scanner.js'
-import { bluetoothSupported, savedPrinter, isConnected, choosePrinter, forgetPrinter, reconnect, printMethod, setPrintMethod } from '../btprinter.js'
+import { bluetoothSupported, savedPrinter, isConnected, choosePrinter, forgetPrinter, reconnect, printMethod, setPrintMethod, nativeBluetooth } from '../btprinter.js'
+import { isNativeApp } from '../native.js'
 import { scannerEnabled } from './cashier.js'
 import { summary } from './users.js'
 import {
@@ -128,11 +129,17 @@ export async function render(main, params) {
       return panel('Printer Settings', `
         <p class="label">How should receipts print on this device?</p>
         <div class="pay-tiles" style="grid-template-columns:repeat(2,1fr)">
-          <button type="button" class="pay-tile" data-method="dialog" aria-pressed="${method === 'dialog'}">${icon('printer')}Printers on this device<span class="small muted" style="font-weight:400">USB, Wi-Fi, network, Android print service</span></button>
+          <button type="button" class="pay-tile" data-method="dialog" aria-pressed="${method === 'dialog'}">${icon('printer')}Printers on this device<span class="small muted" style="font-weight:400">${isNativeApp() ? 'Android printing: Wi-Fi printers, PDF, print apps' : 'USB, Wi-Fi, network, Android print service'}</span></button>
           <button type="button" class="pay-tile" data-method="bluetooth" aria-pressed="${method === 'bluetooth'}" ${btOk ? '' : 'disabled'}>${icon('bluetooth')}Bluetooth printer<span class="small muted" style="font-weight:400">${btOk ? 'Direct to a Bluetooth thermal printer' : 'Not supported in this browser'}</span></button>
         </div>
         ${method === 'dialog' ? `<p class="small muted mt">When you print, the device's print window opens and lists every printer installed on this device — choose your receipt printer there.</p>` : ''}
-        ${method === 'bluetooth' ? `<div class="setting-row mt">${icon('bluetooth')}<div class="grow">
+        ${method === 'bluetooth' && isNativeApp() ? `<div class="setting-row mt">${icon('bluetooth')}<div class="grow">
+            <p class="bold">${saved ? esc(saved.name) : 'No printer connected'}</p>
+            <p class="small ${isConnected() ? 'text-green' : 'muted'}" id="bt-state">${saved ? `${esc(saved.address)} · ${isConnected() ? 'Connected' : 'reconnects automatically when you print'}` : 'Turn the printer on, then scan and tap Connect.'}</p></div>
+            <div class="row-wrap">${saved ? '<button class="btn btn-ghost btn-sm" id="bt-forget">Forget</button>' : ''}<button class="btn btn-primary" id="nbt-scan">${icon('search')} Scan for printers</button></div></div>
+          <div id="nbt-list"></div>
+          <p class="small muted">Shows printers already paired in Android and nearby Bluetooth devices. Most portable thermal printers (58mm/80mm) work. If a printer asks for a PIN, try 0000 or 1234.</p>` : ''}
+        ${method === 'bluetooth' && !isNativeApp() ? `<div class="setting-row mt">${icon('bluetooth')}<div class="grow">
             <p class="bold">${saved ? esc(saved.name) : 'No printer connected'}</p>
             <p class="small ${saved && isConnected() ? 'text-green' : 'muted'}" id="bt-state">${saved ? (isConnected() ? 'Connected' : 'Saved — reconnects when you print') : 'Turn your printer on, then press “Find Bluetooth printers”.'}</p></div>
             <div class="row-wrap">${saved ? '<button class="btn btn-ghost btn-sm" id="bt-forget">Forget</button>' : ''}<button class="btn btn-primary" id="bt-find">${icon('search')} Find Bluetooth printers</button></div></div>
@@ -165,6 +172,59 @@ export async function render(main, params) {
         } catch (err) { setBusy(btn, false); if (err.code !== 'CANCELLED') toast.error(err) }
       })
       root.querySelector('#bt-forget')?.addEventListener('click', () => { forgetPrinter(); toast.info('Printer forgotten'); draw() })
+      const scanBtn = root.querySelector('#nbt-scan')
+      if (scanBtn) {
+        const listBox = root.querySelector('#nbt-list')
+        let paired = [], nearby = []
+        const row = (d) => `<div class="setting-row" style="padding:8px 0">${icon(d.likelyPrinter ? 'printer' : 'bluetooth')}<div class="grow"><p class="bold">${esc(d.name)}
+            ${d.likelyPrinter ? '<span class="badge badge-green">Printer</span>' : ''} ${d.paired ? '<span class="badge">Paired</span>' : ''}</p><p class="small muted">${esc(d.address)}</p></div>
+            ${savedPrinter()?.address === d.address && isConnected() ? '<span class="badge badge-green">Connected</span>' : `<button class="btn btn-secondary btn-sm" data-connect="${esc(d.address)}">Connect</button>`}</div>`
+        const sortP = (a, b) => (b.likelyPrinter - a.likelyPrinter) || String(a.name).localeCompare(String(b.name))
+        const renderList = (scanning) => {
+          const others = nearby.filter((n) => !paired.some((p) => p.address === n.address)).sort(sortP)
+          listBox.innerHTML = `${paired.length ? `<p class="section-label mt">Paired devices</p>${[...paired].sort(sortP).map(row).join('')}` : ''}
+            <p class="section-label mt">Nearby devices ${scanning ? '<span class="spinner" style="width:12px;height:12px"></span>' : ''}</p>
+            ${others.length ? others.map(row).join('') : `<p class="small muted">${scanning ? 'Searching…' : 'No other devices found. Make sure the printer is on and not connected to another phone.'}</p>`}`
+          listBox.querySelectorAll('[data-connect]').forEach((b) => {
+            b.onclick = async () => {
+              const dev = [...paired, ...nearby].find((d) => d.address === b.dataset.connect)
+              setBusy(b, true, 'Connecting…')
+              try {
+                await nativeBluetooth.stopScan()
+                const p = await nativeBluetooth.connect(dev)
+                toast.success(`Connected to ${p.name}`)
+                draw()
+              } catch (err) { setBusy(b, false); toast.error(err) }
+            }
+          })
+        }
+        scanBtn.onclick = async () => {
+          setBusy(scanBtn, true, 'Scanning…')
+          try {
+            await nativeBluetooth.prepare()
+            paired = await nativeBluetooth.paired()
+            nearby = []
+            renderList(true)
+            await nativeBluetooth.startScan()
+            for (let i = 0; i < 16; i++) {
+              await new Promise((r) => setTimeout(r, 1000))
+              if (!root.isConnected) return
+              const res = await nativeBluetooth.results()
+              nearby = res.devices
+              renderList(res.scanning)
+              if (!res.scanning) break
+            }
+            renderList(false)
+          } catch (err) {
+            toast.error(err.code === 'BLUETOOTH_OFF' ? 'Turn on Bluetooth to find printers.' : err)
+          } finally { setBusy(scanBtn, false); nativeBluetooth.stopScan() }
+        }
+        // Show already-paired printers right away when permission was given before.
+        nativeBluetooth.status().then(async (st) => {
+          if (st.permission && st.enabled) { paired = await nativeBluetooth.paired(); renderList(false) }
+          if (st.connected) { const el = root.querySelector('#bt-state'); if (el) { el.textContent = `${st.address} · Connected`; el.className = 'small text-green' } }
+        }).catch(() => {})
+      }
       root.querySelector('#scanner').onchange = (e) => {
         try { localStorage.setItem('pos.scannerEnabled', String(e.target.checked)) } catch { /* ignore */ }
         toast.success(e.target.checked ? 'Hardware scanner on' : 'Hardware scanner off — camera scanning is the main option')

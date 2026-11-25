@@ -2,7 +2,8 @@ import { rpc } from '../api.js'
 import { store } from '../session.js'
 import { pageHead } from '../layout.js'
 import { rangeControl, bindRange } from './dashboard.js'
-import { esc, icon, money, num, options, badge, spinnerBlock, emptyBlock, errorBlock, fmtDate, rangeFor, PAYMENT, MOVEMENTS, EXPENSE_CATS, downloadCsv } from '../util.js'
+import { isNativeApp, nativePrintHtml } from '../native.js'
+import { esc, icon, money, num, options, badge, toast, spinnerBlock, emptyBlock, errorBlock, fmtDate, rangeFor, PAYMENT, MOVEMENTS, EXPENSE_CATS, downloadCsv } from '../util.js'
 
 const GROUPS = [['day', 'Daily'], ['week', 'Weekly'], ['month', 'Monthly'], ['year', 'Annual']]
 const CAT = Object.fromEntries(EXPENSE_CATS)
@@ -92,6 +93,14 @@ export async function render(main) {
   }
 
   function printReport() {
+    if (isNativeApp()) {
+      const css = [...document.styleSheets].map((sh) => { try { return [...sh.cssRules].map((r) => r.cssText).join('\n') } catch { return '' } }).join('\n')
+      const html = `<!doctype html><html><head><meta charset="utf-8"><style>${css} body{background:#fff;padding:8px} .card-stat,.panel{box-shadow:none;break-inside:avoid}</style></head><body>
+        <h1 style="font-size:18px">${esc(s.store_name)} — ${st.tab === 'sales' ? 'Sales &amp; Profit Report' : 'Inventory Report'}</h1>
+        <p style="font-size:12px">${esc(fmtDate(st.range.from, s))} – ${esc(fmtDate(st.range.to, s))}</p>${main.querySelector('#body').innerHTML}</body></html>`
+      nativePrintHtml(html, `${s.store_name} report`).catch((err) => toast.error(err))
+      return
+    }
     const root = document.getElementById('print-root')
     root.innerHTML = `<div style="font-family:system-ui,sans-serif;color:#000;padding:8px"><h1 style="font-size:18px">${esc(s.store_name)} — ${st.tab === 'sales' ? 'Sales & Profit Report' : 'Inventory Report'}</h1>
       <p style="font-size:12px">${esc(fmtDate(st.range.from, s))} – ${esc(fmtDate(st.range.to, s))}</p>${main.querySelector('#body').innerHTML}</div>`

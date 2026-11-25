@@ -75,6 +75,35 @@ python3 -m http.server 8000
 
 Then open http://localhost:8000.
 
+### Android app (APK)
+
+The `android-app/` folder packages the same `web/` app as an Android app (Capacitor) with native extras:
+**classic Bluetooth printer support** (lists paired printers and scans for nearby ones — this covers most
+portable 58mm/80mm thermal printers, which browsers cannot reach), Android printing (Wi-Fi printers, PDF,
+print apps) and saving CSV exports through the share sheet. Camera scanning works the same as on the web.
+
+**Download:** every push that changes `web/` or `android-app/` runs the *Build Android APK* workflow, which puts
+`POS-System.apk` on the repository's **Releases → apk-latest** page. On the phone: download it, open it, and allow
+installing apps from that source. (It is a debug-signed build for direct installation; publishing on Google Play
+needs a release signing key.)
+
+**In the app:** Settings → Printer & Scanner → *Bluetooth printer* → **Scan for printers** → **Connect**.
+Android asks for "Nearby devices" (or Location on Android 11 and older) the first time.
+
+To build locally instead: install Node 20+, Java 21 and Android Studio, then:
+
+```bash
+cd android-app
+```
+
+```bash
+npm install && npm run sync
+```
+
+```bash
+cd android && ./gradlew assembleDebug
+```
+
 ### 5. First run
 
 Open the site → **"Welcome! Let's set up your POS."** → create the administrator → enter store
@@ -121,8 +150,8 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
   that needs Firebase Admin (a server). They can sign in to Firebase but see only "account deactivated".
 - Cashiers cannot see cost prices in the app, but a technically skilled cashier could read them through the database API.
 - Refunds are full refunds. Role permissions are a fixed matrix. One store is created by setup.
-- Direct Bluetooth printing needs Chrome/Edge (not iPhone/iPad or Firefox) and a Bluetooth **Low Energy** printer; classic-Bluetooth-only
-  printers must be paired in the operating system and used through the print window. Bluetooth receipts are text only (no logo).
+- On the website, direct Bluetooth printing needs Chrome/Edge (not iPhone/iPad or Firefox) and a Bluetooth **Low Energy** printer.
+  The Android app supports classic Bluetooth printers too. Bluetooth receipts are text only (no logo). There is no iPhone app.
 - A website cannot list the printers installed on a computer or detect whether a USB/Bluetooth barcode scanner is connected:
   the print window shows the installed printers, and the hardware-scanner switch in Settings controls whether the camera button is the main scan option.
 - "Excel" import/export uses CSV files, which Excel opens and saves.

@@ -4,6 +4,11 @@
 // Classic-Bluetooth-only printers do not appear in the list: print those through the
 // system print dialog after pairing them in the operating system.
 import { PAYMENT, fmtDate, fmtTime } from './util.js'
+import { isNativeApp, native, bytesToBase64 } from './native.js'
+
+// In the Android app, printing uses the native PosBluetooth plugin (classic Bluetooth SPP),
+// which also sees printers that browsers cannot (most portable thermal printers).
+let nativeConnected = false
 
 // GATT services used by common BLE ESC/POS thermal printers (must be declared up front).
 const PRINTER_SERVICES = [
@@ -24,9 +29,25 @@ const store = {
   set saved(v) { try { v ? localStorage.setItem('pos.btPrinter', JSON.stringify(v)) : localStorage.removeItem('pos.btPrinter') } catch { /* ignore */ } },
 }
 
-export const bluetoothSupported = () => Boolean(navigator.bluetooth) && window.isSecureContext
+export const bluetoothSupported = () => isNativeApp() || (Boolean(navigator.bluetooth) && window.isSecureContext)
 export const savedPrinter = () => store.saved
-export const isConnected = () => Boolean(state.device?.gatt?.connected && state.characteristic)
+export const isConnected = () => (isNativeApp() ? nativeConnected : Boolean(state.device?.gatt?.connected && state.characteristic))
+
+/** Android app: list, scan and connect classic Bluetooth printers. */
+export const nativeBluetooth = {
+  prepare: () => native('PosBluetooth', 'prepare'),
+  status: () => native('PosBluetooth', 'getStatus'),
+  paired: async () => (await native('PosBluetooth', 'getPairedDevices')).devices,
+  startScan: () => native('PosBluetooth', 'startScan'),
+  results: () => native('PosBluetooth', 'getScanResults'),
+  stopScan: () => native('PosBluetooth', 'stopScan').catch(() => {}),
+  async connect(device) {
+    const st = await native('PosBluetooth', 'connect', { address: device.address })
+    nativeConnected = true
+    store.saved = { id: device.address, address: device.address, name: st.name || device.name }
+    return store.saved
+  },
+}
 
 export function printMethod() {
   try { return localStorage.getItem('pos.printMethod') || 'dialog' } catch { return 'dialog' }
@@ -75,6 +96,17 @@ export async function choosePrinter() {
 
 /** Reconnects to the last printer without showing the list (when the browser allows it). */
 export async function reconnect() {
+  if (isNativeApp()) {
+    const saved = store.saved
+    if (!saved?.address) return false
+    try {
+      const st = await native('PosBluetooth', 'getStatus')
+      if (st.connected && st.address === saved.address) { nativeConnected = true; return true }
+      await native('PosBluetooth', 'prepare')
+      await nativeBluetooth.connect(saved)
+      return true
+    } catch { nativeConnected = false; return false }
+  }
   if (isConnected()) return true
   try {
     if (state.device) { await attach(state.device); return true }
@@ -88,6 +120,7 @@ export async function reconnect() {
 }
 
 export function forgetPrinter() {
+  if (isNativeApp()) { native('PosBluetooth', 'disconnect').catch(() => {}); nativeConnected = false; store.saved = null; return }
   try { state.device?.gatt?.disconnect() } catch { /* ignore */ }
   state.device = null
   state.characteristic = null
@@ -98,6 +131,16 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 export async function sendBytes(bytes) {
   if (!isConnected() && !(await reconnect())) throw new PrinterError('NOT_CONNECTED', 'The Bluetooth printer is not connected.')
+  if (isNativeApp()) {
+    try {
+      await native('PosBluetooth', 'write', { data: bytesToBase64(bytes) })
+    } catch (err) {
+      nativeConnected = false
+      if (!(await reconnect())) throw new PrinterError('NOT_CONNECTED', 'The Bluetooth printer is not connected.')
+      await native('PosBluetooth', 'write', { data: bytesToBase64(bytes) }) // one retry after reconnecting
+    }
+    return
+  }
   const c = state.characteristic
   const chunk = 20 // works with the default BLE packet size on every printer
   for (let i = 0; i < bytes.length; i += chunk) {

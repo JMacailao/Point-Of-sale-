@@ -1,4 +1,5 @@
 // Shared helpers: HTML escaping, formatting, icons, toasts, modals, CSV.
+import { isNativeApp, nativeShareFile } from './native.js'
 
 /** Escape any value for safe insertion into HTML (always use for user data). */
 export function esc(v) {
@@ -285,7 +286,13 @@ function csvCell(v) {
 }
 export function downloadCsv(filename, columns, rows) {
   const lines = [columns.map((c) => csvCell(c[0])).join(','), ...rows.map((r) => columns.map((c) => csvCell(c[1](r))).join(','))]
-  const blob = new Blob(['﻿' + lines.join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' })
+  const content = '\uFEFF' + lines.join('\r\n') + '\r\n'
+  if (isNativeApp()) {
+    // Android app: hand the file to the share sheet (save to Files/Drive, email…)
+    nativeShareFile(filename, new TextEncoder().encode(content), 'text/csv').catch((err) => toast.error(err))
+    return
+  }
+  const blob = new Blob([content], { type: 'text/csv;charset=utf-8' })
   const a = document.createElement('a')
   a.href = URL.createObjectURL(blob)
   a.download = filename

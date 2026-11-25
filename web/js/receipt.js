@@ -1,5 +1,6 @@
 import { esc, money, fmtDate, fmtTime, PAYMENT, openModal, toast, setBusy } from './util.js'
 import { printMethod, printViaBluetooth, choosePrinter, savedPrinter } from './btprinter.js'
+import { isNativeApp, nativePrintHtml } from './native.js'
 
 // Thermal rolls are continuous: the page height is set to the measured receipt height at print time.
 const PAPER = {
@@ -57,9 +58,13 @@ export async function printReceipt(sale, store, paper) {
     const md = openModal({
       title: 'Bluetooth printer', size: 'sm',
       body: `<p>${esc(err.code === 'NOT_CONNECTED' ? `${saved ? `"${saved.name}"` : 'The Bluetooth printer'} is not connected. Turn the printer on and keep it near this device.` : err.message)}</p>`,
-      footer: '<button class="btn btn-secondary" id="use-dialog">Use print dialog</button><button class="btn btn-primary" id="connect">Connect printer</button>',
+      footer: `<button class="btn btn-secondary" id="use-dialog">Use print dialog</button><button class="btn btn-primary" id="connect">${isNativeApp() ? 'Printer settings' : 'Connect printer'}</button>`,
     })
     md.el.querySelector('#use-dialog').onclick = () => { md.close(); printWithDialog(sale, store, paper) }
+    if (isNativeApp()) {
+      md.el.querySelector('#connect').onclick = () => { md.close(); location.hash = '#/settings?tab=devices' }
+      return
+    }
     md.el.querySelector('#connect').onclick = async (e) => {
       const btn = e.currentTarget
       try {
@@ -78,6 +83,11 @@ export async function printReceipt(sale, store, paper) {
 export async function printWithDialog(sale, store, paper) {
   const size = paper || store?.receipt_paper || '80mm'
   const c = PAPER[size] || PAPER['80mm']
+  if (isNativeApp()) {
+    // Android app: WebView has no window.print(); use Android's print system instead.
+    const html = `<!doctype html><html><head><meta charset="utf-8"><style>@page { margin: 4mm; } body { margin: 0; }</style></head><body>${receiptHtml(sale, store, size)}</body></html>`
+    return nativePrintHtml(html, `Receipt ${sale.transaction_number}`).catch((err) => toast.error(err))
+  }
   const root = document.getElementById('print-root')
   root.innerHTML = receiptHtml(sale, store, size)
   await Promise.all([...root.querySelectorAll('img')].map((img) => (img.complete ? null
