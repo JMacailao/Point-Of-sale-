@@ -16,6 +16,8 @@
 --    4. Row level security & privileges
 --    5. Storage buckets
 --    6. Browser access (Firebase token -> Supabase), app RPC functions, storage policies
+--    7. Today's Menu (shareable public menu link)
+--    8. Self-service registration (new account + new store)
 -- =============================================================================
 
 
@@ -35,7 +37,8 @@ begin
     from information_schema.tables
    where table_schema = 'public'
      and table_name in ('system_settings','profiles','roles','permissions','role_permissions','stores','store_members',
-                        'categories','products','sales','sale_items','payments','stock_movements','expenses','audit_logs');
+                        'categories','products','sales','sale_items','payments','stock_movements','expenses','audit_logs',
+                        'menu_links','daily_menus');
   if v_existing is not null then
     raise exception 'This Supabase project already has tables with the same names as the POS tables: %. They probably belong to another app. Use a NEW, empty Supabase project (recommended), or — only if that data is not needed — run supabase/reset.sql first, which DELETES these tables.', v_existing;
   end if;
@@ -2570,8 +2573,289 @@ begin
 end;
 $$;
 
+
 -- ############################################################################
--- PART 7 — sales by item report
+-- PART 7 — TODAY'S MENU (shareable public menu)
+-- ############################################################################
+-- =============================================================================
+-- An administrator picks which products are available on a given day. Each
+-- store has ONE secret share link (menu.html?s=<token>) that always shows
+-- today's menu in the store's time zone, so it can be posted once on
+-- Messenger / Facebook and stays valid. Customers need no account: the public
+-- function below returns only menu data (name, description, picture, price,
+-- sold out) — never cost, stock counts or anything else. Resetting the link
+-- makes the old one stop working.
+-- =============================================================================
+
+insert into public.permissions (permission_key, module, description)
+values ('menu.manage', 'menu', 'Choose the products on the shareable daily menu')
+on conflict (permission_key) do nothing;
+
+insert into public.role_permissions (role_id, permission_id)
+select r.id, p.id from public.roles r join public.permissions p on p.permission_key = 'menu.manage'
+ where r.key = 'administrator'
+on conflict (role_id, permission_id) do nothing;
+
+create table if not exists public.menu_links (
+  store_id    uuid primary key references public.stores(id) on delete restrict,
+  token       text not null unique check (token ~ '^[a-f0-9]{32}$'),
+  created_at  timestamptz not null default now()
+);
+
+create table if not exists public.daily_menus (
+  store_id       uuid not null references public.stores(id) on delete restrict,
+  menu_date      date not null,
+  product_ids    uuid[] not null default '{}' check (cardinality(product_ids) <= 500),
+  note           text check (note is null or length(note) <= 500),
+  mark_sold_out  boolean not null default true,
+  updated_by     uuid references public.profiles(id),
+  updated_at     timestamptz not null default now(),
+  primary key (store_id, menu_date)
+);
+
+-- No policies and no table privileges: these tables are only reachable
+-- through the functions below.
+alter table public.menu_links  enable row level security;
+alter table public.daily_menus enable row level security;
+revoke all on public.menu_links, public.daily_menus from public, anon, authenticated;
+grant all on public.menu_links, public.daily_menus to service_role;
+
+-- Returns the store's share token, creating it on first use.
+create or replace function app.menu_token(p_store_id uuid)
+returns text language plpgsql security definer set search_path = '' as $$
+declare
+  v_token text;
+begin
+  insert into public.menu_links (store_id, token)
+  values (p_store_id, replace(gen_random_uuid()::text, '-', ''))
+  on conflict (store_id) do nothing;
+  select token into v_token from public.menu_links where store_id = p_store_id;
+  return v_token;
+end;
+$$;
+
+create or replace function app.store_today(p_store_id uuid)
+returns date language sql stable security definer set search_path = '' as $$
+  select (now() at time zone s.timezone)::date from public.stores s where s.id = p_store_id;
+$$;
+
+-- Menu for one day (admin screen). p_date null = today in the store's time zone.
+create or replace function public.get_menu(p_store_id uuid, p_date date default null)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_today date;
+  v_date  date;
+  v_menu  public.daily_menus%rowtype;
+begin
+  perform app.require_permission(p_store_id, 'menu.manage');
+  v_today := app.store_today(p_store_id);
+  v_date := coalesce(p_date, v_today);
+  select * into v_menu from public.daily_menus where store_id = p_store_id and menu_date = v_date;
+  return jsonb_build_object(
+    'date', v_date,
+    'today', v_today,
+    'saved', v_menu.store_id is not null,
+    'product_ids', to_jsonb(coalesce(v_menu.product_ids, '{}'::uuid[])),
+    'note', v_menu.note,
+    'mark_sold_out', coalesce(v_menu.mark_sold_out, true),
+    'updated_at', v_menu.updated_at,
+    'updated_by_name', (select coalesce(p.full_name, p.email) from public.profiles p where p.id = v_menu.updated_by),
+    'token', app.menu_token(p_store_id));
+end;
+$$;
+
+-- Saves the products available on a day (order is kept; unknown ids are dropped).
+create or replace function public.save_menu(p_store_id uuid, p_date date, p_product_ids uuid[],
+                                            p_note text default null, p_mark_sold_out boolean default true)
+returns jsonb language plpgsql security definer set search_path = '' as $$
+declare
+  v_actor uuid := app.require_permission(p_store_id, 'menu.manage');
+  v_ids   uuid[];
+  v_note  text := nullif(btrim(coalesce(p_note, '')), '');
+begin
+  if p_date is null then perform app.raise('VALIDATION: choose a date'); end if;
+  if cardinality(coalesce(p_product_ids, '{}')) > 500 then perform app.raise('VALIDATION: a menu can hold at most 500 products'); end if;
+  if length(v_note) > 500 then perform app.raise('VALIDATION: the note can be at most 500 characters'); end if;
+
+  select coalesce(array_agg(x.id order by x.ord), '{}') into v_ids from (
+    select distinct on (u.id) u.id, u.ord
+      from unnest(coalesce(p_product_ids, '{}')) with ordinality u(id, ord)
+      join public.products p on p.id = u.id and p.store_id = p_store_id and p.is_active
+     order by u.id, u.ord) x;
+
+  insert into public.daily_menus (store_id, menu_date, product_ids, note, mark_sold_out, updated_by, updated_at)
+  values (p_store_id, p_date, v_ids, v_note, coalesce(p_mark_sold_out, true), v_actor, now())
+  on conflict (store_id, menu_date) do update
+     set product_ids = excluded.product_ids, note = excluded.note, mark_sold_out = excluded.mark_sold_out,
+         updated_by = excluded.updated_by, updated_at = excluded.updated_at;
+
+  perform app.write_audit(p_store_id, v_actor, 'menu.save', 'menu', null, null,
+    jsonb_build_object('date', p_date, 'products', cardinality(v_ids), 'note', v_note));
+  return public.get_menu(p_store_id, p_date);
+end;
+$$;
+
+-- Replaces the share link; the old link stops working immediately.
+create or replace function public.reset_menu_link(p_store_id uuid)
+returns text language plpgsql security definer set search_path = '' as $$
+declare
+  v_actor uuid := app.require_permission(p_store_id, 'menu.manage');
+  v_token text := replace(gen_random_uuid()::text, '-', '');
+begin
+  insert into public.menu_links (store_id, token) values (p_store_id, v_token)
+  on conflict (store_id) do update set token = excluded.token, created_at = now();
+  perform app.write_audit(p_store_id, v_actor, 'menu.reset_link', 'menu', null, null, null);
+  return v_token;
+end;
+$$;
+
+-- PUBLIC (no sign-in): the menu customers see through the share link.
+create or replace function public.get_public_menu(p_token text, p_date date default null)
+returns jsonb language plpgsql stable security definer set search_path = '' as $$
+declare
+  v_store public.stores%rowtype;
+  v_today date;
+  v_date  date;
+  v_menu  public.daily_menus%rowtype;
+begin
+  select s.* into v_store
+    from public.menu_links l join public.stores s on s.id = l.store_id and s.is_active
+   where l.token = lower(btrim(coalesce(p_token, '')));
+  if v_store.id is null then
+    perform app.raise('NOT_FOUND: this menu link is not valid. Ask the store for a new link.');
+  end if;
+  v_today := (now() at time zone v_store.timezone)::date;
+  v_date := coalesce(p_date, v_today);
+  select * into v_menu from public.daily_menus where store_id = v_store.id and menu_date = v_date;
+
+  return jsonb_build_object(
+    'store', jsonb_build_object('name', v_store.store_name, 'logo_url', v_store.logo_url,
+                                'address', v_store.store_address, 'contact_number', v_store.contact_number,
+                                'currency', v_store.currency, 'timezone', v_store.timezone),
+    'date', v_date,
+    'today', v_today,
+    'note', v_menu.note,
+    'updated_at', v_menu.updated_at,
+    'items', coalesce((
+      select jsonb_agg(jsonb_build_object(
+               'id', p.id, 'name', p.name, 'description', p.description, 'image_url', p.image_url,
+               'price', p.selling_price, 'category', c.name,
+               'sold_out', v_menu.mark_sold_out and p.stock_quantity <= 0)
+             order by u.ord)
+        from unnest(v_menu.product_ids) with ordinality u(id, ord)
+        join public.products p on p.id = u.id and p.store_id = v_store.id and p.is_active
+        left join public.categories c on c.id = p.category_id), '[]'::jsonb));
+end;
+$$;
+
+revoke all on function app.menu_token(uuid), app.store_today(uuid),
+  public.get_menu(uuid, date), public.save_menu(uuid, date, uuid[], text, boolean),
+  public.reset_menu_link(uuid), public.get_public_menu(text, date)
+  from public;
+grant execute on function
+  public.get_menu(uuid, date), public.save_menu(uuid, date, uuid[], text, boolean),
+  public.reset_menu_link(uuid), public.get_public_menu(text, date)
+  to anon, authenticated;
+
+
+-- ############################################################################
+-- PART 8 — SELF-SERVICE REGISTRATION (new account + new store)
+-- ############################################################################
+-- =============================================================================
+-- After the first-run setup, anyone can create an account together with their
+-- OWN store and becomes that store's administrator. Every business record is
+-- scoped by store_id and row level security only shows stores the user is a
+-- member of, so stores never see each other's products, stock, sales,
+-- expenses, users or audit logs.
+-- One account = one store: staff of an existing store cannot register another.
+-- =============================================================================
+
+create or replace function public.register_store(p_full_name text, p_store jsonb)
+returns uuid language plpgsql security definer set search_path = '' as $$
+declare
+  v_uid      text := app.jwt_uid();
+  v_email    text := lower(btrim(coalesce(app.jwt_claims() ->> 'email', '')));
+  v_name     text := nullif(btrim(coalesce(p_full_name, '')), '');
+  v_profile  public.profiles%rowtype;
+  v_store_id uuid;
+begin
+  if v_uid is null then
+    raise exception 'NOT_AUTHENTICATED: please sign in' using errcode = 'P0001';
+  end if;
+  if v_email = '' then
+    raise exception 'VALIDATION: the account has no email address' using errcode = 'P0001';
+  end if;
+  if not exists (select 1 from public.system_settings where singleton and setup_completed) then
+    raise exception 'SETUP_NOT_COMPLETED: finish the first-run setup before registering more stores' using errcode = 'P0001';
+  end if;
+  if v_name is null or length(v_name) > 120 then
+    raise exception 'VALIDATION: your name is required (up to 120 characters)' using errcode = 'P0001';
+  end if;
+  if coalesce(btrim(p_store ->> 'store_name'), '') = '' then
+    raise exception 'VALIDATION: store name is required' using errcode = 'P0001';
+  end if;
+
+  select * into v_profile from public.profiles where firebase_uid = v_uid for update;
+  if found then
+    if exists (select 1 from public.store_members where profile_id = v_profile.id) then
+      raise exception 'ALREADY_REGISTERED: this account already belongs to a store. Sign in instead.' using errcode = 'P0001';
+    end if;
+    if not v_profile.is_active then
+      raise exception 'ACCOUNT_INACTIVE: your account has been deactivated' using errcode = 'P0001';
+    end if;
+    update public.profiles set full_name = v_name where id = v_profile.id;
+  else
+    if exists (select 1 from public.profiles where lower(email) = v_email) then
+      raise exception 'CONFLICT: an account with this email already exists' using errcode = 'P0001';
+    end if;
+    insert into public.profiles (firebase_uid, email, full_name) values (v_uid, v_email, v_name)
+    returning * into v_profile;
+  end if;
+  perform set_config('app.actor_id', v_profile.id::text, true);
+
+  insert into public.stores (
+    store_name, store_address, contact_number, business_email, business_type,
+    currency, timezone, date_format, receipt_footer, created_by)
+  values (
+    btrim(p_store ->> 'store_name'),
+    nullif(btrim(coalesce(p_store ->> 'store_address', '')), ''),
+    nullif(btrim(coalesce(p_store ->> 'contact_number', '')), ''),
+    nullif(lower(btrim(coalesce(p_store ->> 'business_email', ''))), ''),
+    nullif(btrim(coalesce(p_store ->> 'business_type', '')), ''),
+    'PHP',
+    coalesce(nullif(p_store ->> 'timezone', ''), 'Asia/Manila'),
+    coalesce(nullif(p_store ->> 'date_format', ''), 'DD/MM/YYYY'),
+    coalesce(nullif(btrim(coalesce(p_store ->> 'receipt_footer', '')), ''), 'Thank you for your purchase!'),
+    v_profile.id)
+  returning id into v_store_id;
+
+  insert into public.store_members (store_id, profile_id, role_id)
+  select v_store_id, v_profile.id, r.id from public.roles r where r.key = 'administrator';
+
+  perform app.write_audit(v_store_id, v_profile.id, 'register', 'setup', v_store_id, null,
+    jsonb_build_object('store_name', btrim(p_store ->> 'store_name'), 'email', v_email));
+  return v_store_id;
+end;
+$$;
+
+-- Login-page branding: with several stores the login page is shared, so it
+-- shows the generic title instead of one store's name and logo.
+create or replace function public.get_setup_status()
+returns jsonb language sql stable security definer set search_path = '' as $$
+  select jsonb_build_object(
+    'adminClaimed', ss.admin_claimed_at is not null,
+    'setupCompleted', ss.setup_completed,
+    'store', case when ss.setup_completed and (select count(*) from public.stores s where s.is_active) = 1 then (
+               select jsonb_build_object('store_name', s.store_name, 'logo_url', s.logo_url)
+               from public.stores s where s.is_active limit 1) end)
+  from public.system_settings ss where ss.singleton;
+$$;
+
+revoke all on function public.register_store(text, jsonb) from public;
+grant execute on function public.register_store(text, jsonb), public.get_setup_status() to anon, authenticated;
+
+-- ############################################################################
+-- PART 9 — sales by item report
 -- ############################################################################
 -- Total sales per item for a date range (store time zone). Completed sales count
 -- toward quantity/sales/cost/profit; refunded quantities are shown separately.

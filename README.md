@@ -16,6 +16,7 @@ web/                     the whole app (upload this folder to any static host)
   css/styles.css
   js/                    app code (config.js holds the public Firebase/Supabase settings)
 supabase/setup.sql       the whole database in ONE file — run it once
+supabase/upgrades/       add-ons for databases installed with an older setup.sql
 supabase/tests/          database test suite
 ```
 
@@ -104,6 +105,15 @@ npm install && npm run sync
 cd android && ./gradlew assembleDebug
 ```
 
+### Already installed? Add new modules
+
+If your database was set up **before** the *Today's Menu* module existed, run `supabase/upgrades/add_daily_menu.sql`
+once (Supabase → SQL Editor → paste → Run). Likewise, for store **registration** run `supabase/upgrades/add_store_registration.sql`.
+Both are safe to run twice; a fresh `setup.sql` already includes them.
+
+The menu link uses the website's own address. In the Android app it uses `PUBLIC_APP_URL` in `web/js/config.js`
+(set to this repository's GitHub Pages site) — change it if the website is hosted elsewhere.
+
 ### 5. First run
 
 Open the site → **"Welcome! Let's set up your POS."** → create the administrator → enter store
@@ -116,6 +126,11 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
 - **Setup wizard:** administrator → store info (₱ PHP, Asia/Manila, DD/MM/YYYY, receipt footer, logo) → "Your store is ready!".
   The first-administrator claim is a single atomic database operation, so two people registering at the same time cannot both become admin.
   Registration never appears again afterwards.
+- **Registration (new stores):** after the first setup, the login page shows **"New business? Create a store account"**.
+  Anyone can sign up with their name, email, password and store details and becomes the administrator of their **own** store.
+  Stores are completely separate: each sees only its own products, stock, sales, expenses, staff, menu and audit log
+  (enforced by the database). One account belongs to one store. If a sign-up is interrupted, signing in continues it.
+  With several stores, the login page shows the generic "POS System" title instead of one store's logo.
 - **Login:** remember me, show/hide password, forgot password, clear error messages, deactivated-account blocking, session expiry handling.
 - **Roles:** Administrator (everything) and Cashier (dashboard, cashier, products view-only, own sales). Enforced by the database.
 - **Dashboard:** today's sales, transactions, cash vs card/e-wallet, products, low stock, sales chart, recent sales, best sellers, quick actions.
@@ -123,6 +138,12 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
   payment window (Cash, GCash, Maya, Card/Other) with change and reference number, double-click-safe checkout, receipt.
 - **Products:** add/edit/archive/restore, images, SKU/barcode uniqueness, categories, search/filter/sort/paging, **Excel import/export** (CSV) with template.
 - **Stock / Inventory:** stock in, stock out, count adjustments, low-stock alerts, full movement history, stock value.
+- **Today's Menu:** pick the products available today (or tomorrow / any day), add a note (e.g. "Order before 11 AM"), save, then
+  share one link on Messenger, Facebook or any chat — **Share…** (phone share sheet), **Messenger**, **Post on Facebook**,
+  **Copy link** or **Copy menu as text** (names and prices, ready to paste). Customers open the link without an account and see
+  the store name, logo, note, pictures, prices and "Sold out" for items with no stock (can be turned off). The link always shows
+  *today's* menu (store time zone), so it can be posted once and reused; **Reset link** makes the old link stop working.
+  Only names, descriptions, pictures and selling prices are shown — never cost or stock counts.
 - **Users:** create staff (Firebase emails them a password-setup link), roles, activate/deactivate, activity log.
 - **Revenue & Sales:** filters, details, full refunds with restock, receipt reprint (58mm / 80mm / A4), CSV export.
 - **Expenses:** add/edit with audit history, void instead of delete, filters, export.
@@ -161,7 +182,7 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
 ## Tests
 
 The database suite runs `setup.sql` on a local PostgreSQL and checks permissions, the atomic admin claim, sales math, discounts,
-tax, overselling, refunds, immutability, store isolation and rejection of tokens from other Firebase projects:
+tax, overselling, refunds, immutability, store isolation, the public menu link, store registration and rejection of tokens from other Firebase projects:
 
 ```bash
 ./supabase/tests/run_db_tests.sh
@@ -172,7 +193,7 @@ logout/login → cashier permissions → deactivation → mobile layout) was exe
 Firebase Auth emulator and a local PostgreSQL with `setup.sql`.
 
 **Upgrading an existing database:** if `setup.sql` was run before a feature was added, run the matching file in
-`supabase/upgrades/` once in the SQL Editor (for example `001_sales_by_item.sql` for the Sales by Item report).
+`supabase/upgrades/` once in the SQL Editor (for example `add_sales_by_item.sql` for the Sales by Item report).
 
 If an administrator was registered but store setup was never finished, `supabase/scripts/reset_initial_setup.sql`
 resets the claim (it refuses to run once a store exists).

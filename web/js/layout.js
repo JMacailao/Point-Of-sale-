@@ -5,6 +5,7 @@ export const NAV = [
   { path: 'dashboard', label: 'Dashboard', icon: 'dashboard', perms: ['dashboard.view'] },
   { path: 'cashier', label: 'Cashier', icon: 'cart', perms: ['pos.use'] },
   { path: 'products', label: 'Products', icon: 'package', perms: ['products.view'] },
+  { path: 'menu', label: "Today's Menu", icon: 'utensils', perms: ['menu.manage'] },
   { path: 'inventory', label: 'Stock / Inventory', icon: 'boxes', perms: ['inventory.view'] },
   { path: 'users', label: 'Users', icon: 'users', perms: ['users.manage'] },
   { path: 'sales', label: 'Revenue & Sales', icon: 'receipt', perms: ['sales.view_all', 'sales.view_own'] },

@@ -2,7 +2,7 @@ import { session, loadStatus, loadContext, can } from './session.js'
 import { auth, onAuthStateChanged, signOut } from './firebase.js'
 import { rpc, setSessionErrorHandler } from './api.js'
 import { renderShell, homePath, NAV } from './layout.js'
-import { renderAdminStep, renderStoreStep, renderWelcome, renderLogin, renderForgot, renderFatal } from './pages/auth.js'
+import { renderAdminStep, renderStoreStep, renderWelcome, renderLogin, renderForgot, renderFatal, renderRegister } from './pages/auth.js'
 import { spinnerBlock, toast } from './util.js'
 
 const app = document.getElementById('app')
@@ -10,6 +10,7 @@ const PAGES = {
   dashboard: () => import('./pages/dashboard.js'),
   cashier: () => import('./pages/cashier.js'),
   products: () => import('./pages/products.js'),
+  menu: () => import('./pages/menu.js'),
   inventory: () => import('./pages/inventory.js'),
   users: () => import('./pages/users.js'),
   sales: () => import('./pages/sales.js'),
@@ -28,6 +29,7 @@ export function navigate(path) {
 export async function logout() {
   await rpc('record_auth_event', { p_action: 'logout', p_store_id: session.ctx?.store?.id ?? null }).catch(() => {})
   session.ctx = null
+  session.needsStore = false
   await signOut(auth)
   navigate('login')
 }
@@ -58,11 +60,16 @@ async function route() {
   }
   if (path === 'welcome' && ctx?.store) return renderWelcome(app, navigate)
   if (!ctx) {
+    if (session.needsStore) {
+      if (path !== 'register') return go('register')
+      return renderRegister(app, navigate, logout)
+    }
+    if (path === 'register' && session.status.setupCompleted) return renderRegister(app, navigate, logout)
     if (path === 'forgot-password') return renderForgot(app)
     if (path !== 'login') return go('login')
     return renderLogin(app)
   }
-  if (['', 'setup', 'login', 'forgot-password', 'welcome'].includes(path)) return go(homePath())
+  if (['', 'setup', 'login', 'register', 'forgot-password', 'welcome'].includes(path)) return go(homePath())
 
   // ----- application pages
   const nav = NAV.find((n) => n.path === path)
@@ -97,6 +104,7 @@ async function boot() {
   onAuthStateChanged(auth, async (user) => {
     session.firebaseUser = user
     if (session.busyAuth) return // registration flow handles its own state
+    session.needsStore = false
     if (!user) {
       session.ctx = null
     } else {
@@ -105,6 +113,14 @@ async function boot() {
         await loadContext()
         if (session.freshLogin) rpc('record_auth_event', { p_action: 'login', p_store_id: session.ctx?.store?.id ?? null }).catch(() => {})
       } catch (err) {
+        if (err.code === 'PROFILE_NOT_FOUND' && session.status?.setupCompleted) {
+          // Signed in to Firebase but never finished registering a store: continue registration.
+          session.ctx = null
+          session.needsStore = true
+          session.freshLogin = false
+          authReady = true
+          return route()
+        }
         // Supabase rejected the identity (not registered, deactivated, ...): sign out.
         session.authMessage = err.code === 'SESSION'
           ? 'Supabase did not accept the Firebase sign-in. Enable Firebase under Supabase > Authentication > Third-Party Auth.'
