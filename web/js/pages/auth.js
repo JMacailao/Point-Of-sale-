@@ -165,6 +165,7 @@ export function renderLogin(app) {
         <a href="#/forgot-password">Forgot password?</a></div>
       <div id="err">${errorBox(session.authMessage)}</div>
       <button class="btn btn-primary btn-block btn-lg" type="submit">Login</button>
+      ${session.status?.setupCompleted ? '<p style="text-align:center" class="small">New business? <a href="#/register">Create a store account</a></p>' : ''}
     </form>`, { store: session.status?.store })
   card.querySelector('#f').onsubmit = async (e) => {
     e.preventDefault()
@@ -212,6 +213,93 @@ export function renderForgot(app) {
       if (err?.code === 'auth/user-not-found') return done() // don't reveal whether an account exists
       setBusy(btn, false)
       card.querySelector('#err').innerHTML = errorBox(firebaseMessage(err))
+    }
+  }
+}
+
+// ------------------------------------------------------------ REGISTER
+// Self-service sign-up after the first-run setup: a new account with its own
+// store (the database keeps every store's data separate). If the person is
+// already signed in to Firebase but has no store yet (an earlier sign-up was
+// interrupted), only the store part is shown.
+export function renderRegister(app, navigate, logout) {
+  const finishing = Boolean(session.needsStore && auth.currentUser)
+  const card = layout(app, `
+    <h2 style="font-size:18px">${finishing ? 'Finish creating your store' : 'Create your store account'}</h2>
+    <p class="sub">${finishing ? 'Your login is ready. Tell us about your store to continue.'
+      : 'Start your own POS in a minute. Your products, sales and staff are private to your store.'}</p>
+    <form id="f" class="stack" novalidate>
+      <p class="section-label" style="margin-bottom:0">Your account</p>
+      ${field('Your Name', '<input id="full_name" class="input" maxlength="120" autocomplete="name">', { id: 'full_name', required: true })}
+      ${finishing ? `<p class="small muted">Signed in as <b>${esc(auth.currentUser.email)}</b> · <button type="button" class="link-btn" id="out">Use another account</button></p>` : `
+      ${field('Email Address', '<input id="email" type="email" class="input" autocomplete="email">', { id: 'email', required: true })}
+      <div class="grid-2">
+        ${field('Password', passwordInput('password', 'new-password'), { id: 'password', required: true, hint: 'At least 8 characters with uppercase, lowercase and a number.' })}
+        ${field('Confirm Password', passwordInput('confirm', 'new-password'), { id: 'confirm', required: true })}
+      </div>`}
+      <p class="section-label" style="margin:8px 0 0">Your store</p>
+      ${field('Store Name', '<input id="store_name" class="input" maxlength="120">', { id: 'store_name', required: true })}
+      <div class="grid-2">
+        ${field('Business Type', `<select id="business_type" class="input"><option value="">Select…</option>${options(BUSINESS_TYPES)}</select>`, { id: 'business_type' })}
+        ${field('Contact Number', '<input id="contact_number" type="tel" class="input" maxlength="40" autocomplete="tel">', { id: 'contact_number' })}
+      </div>
+      ${field('Store Address', '<input id="store_address" class="input" maxlength="300">', { id: 'store_address' })}
+      ${field('Time Zone', `<select id="timezone" class="input">${options(TIMEZONES.map((t) => [t, t]), 'Asia/Manila')}</select>`, { id: 'timezone' })}
+      <p class="hint">You can add your logo, tax and receipt settings later in Settings.</p>
+      <div id="err"></div>
+      <button class="btn btn-primary btn-block btn-lg" type="submit">${finishing ? 'Create My Store' : 'Create Account & Store'}</button>
+      ${finishing ? '' : '<p style="text-align:center" class="small">Already have an account? <a href="#/login">Sign in</a></p>'}
+    </form>`, { wide: true, subtitle: 'New store registration' })
+  card.querySelector('#out')?.addEventListener('click', logout)
+  card.querySelector('#f').onsubmit = async (e) => {
+    e.preventDefault()
+    const v = (id) => card.querySelector(`#${id}`)?.value.trim() ?? ''
+    const errs = {}
+    if (!v('full_name')) errs.full_name = 'Your name is required.'
+    if (!finishing) {
+      if (!EMAIL_RE.test(v('email'))) errs.email = 'Enter a valid email address.'
+      const pw = card.querySelector('#password').value
+      const probs = passwordProblems(pw)
+      if (probs.length) errs.password = `Password needs ${probs.join(', ')}.`
+      const confirm = card.querySelector('#confirm').value
+      if (!confirm) errs.confirm = 'Confirm your password.'
+      else if (confirm !== pw) errs.confirm = 'Passwords do not match.'
+    }
+    if (!v('store_name')) errs.store_name = 'Store name is required.'
+    card.querySelector('#err').innerHTML = ''
+    if (!showErrors(card, errs)) return
+    const btn = card.querySelector('[type=submit]')
+    setBusy(btn, true, 'Creating your store…')
+    session.busyAuth = true
+    let created = null
+    try {
+      if (!finishing) {
+        await setRemember(true)
+        created = (await createUserWithEmailAndPassword(auth, v('email').toLowerCase(), card.querySelector('#password').value)).user
+      }
+      let storeId
+      try {
+        storeId = await rpc('register_store', { p_full_name: v('full_name'), p_store: {
+          store_name: v('store_name'), business_type: v('business_type'), contact_number: v('contact_number'),
+          store_address: v('store_address'), timezone: v('timezone') } })
+      } catch (err) {
+        if (created) await deleteUser(created).catch(() => signOut(auth)) // don't leave a login without a store
+        throw err
+      }
+      try { localStorage.setItem('pos.storeId', storeId) } catch { /* ignore */ }
+      session.needsStore = false
+      await loadContext()
+      await loadStatus()
+      rpc('record_auth_event', { p_action: 'login', p_store_id: storeId }).catch(() => {})
+      session.busyAuth = false
+      navigate('welcome')
+    } catch (err) {
+      session.busyAuth = false
+      setBusy(btn, false)
+      const msg = err.code === 'auth/email-already-in-use'
+        ? 'An account with this email already exists. Sign in instead — if you never finished creating your store, signing in lets you continue.'
+        : err.code?.startsWith?.('auth/') ? firebaseMessage(err) : err.message
+      card.querySelector('#err').innerHTML = errorBox(msg)
     }
   }
 }

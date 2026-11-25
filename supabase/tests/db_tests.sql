@@ -385,4 +385,47 @@ select test_helpers.expect_error(format($$select public.get_public_menu(%L)$$, (
 rollback;
 select test_helpers.assert((select count(*) > 0 from audit_logs where module = 'menu' and action = 'menu.save'), 'menu audit');
 
+\echo '15. self-service registration: new account + own store, fully separated'
+-- not signed in
+begin;
+set local role anon;
+select test_helpers.expect_error($$select public.register_store('Nina', '{"store_name":"Nina Eatery"}')$$, 'NOT_AUTHENTICATED');
+rollback;
+-- a brand-new Firebase account registers its own store
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-new-owner'), true);
+set local role anon;
+select test_helpers.expect_error($$select public.register_store('', '{"store_name":"Nina Eatery"}')$$, 'VALIDATION');
+select test_helpers.expect_error($$select public.register_store('Nina', '{"store_name":"  "}')$$, 'VALIDATION');
+insert into test_helpers.vars values ('store_new', public.register_store('Nina Owner', '{"store_name":"Nina Eatery","business_type":"restaurant","timezone":"Asia/Manila"}')::text);
+select test_helpers.assert((public.get_my_context() -> 'store' ->> 'store_name') = 'Nina Eatery', 'new owner lands in own store');
+select test_helpers.assert((public.get_my_context() -> 'role' ->> 'key') = 'administrator', 'new owner is administrator');
+select test_helpers.assert((select count(*) = 1 from stores), 'new owner sees only own store');
+select test_helpers.assert((select count(*) = 0 from products), 'new store sees none of the other store products');
+select test_helpers.assert((select count(*) = 0 from sales), 'no foreign sales');
+select test_helpers.assert((select count(*) = 0 from categories), 'no foreign categories');
+select test_helpers.assert((public.list_products(v::uuid) ->> 'total')::int = 0, 'list_products empty') from test_helpers.vars where k='store_new';
+select test_helpers.assert((public.list_products(v::uuid) ->> 'total')::int = 0, 'other store products hidden even when asked directly') from test_helpers.vars where k='store1';
+select test_helpers.expect_error(format($$select public.adjust_stock(%L, (select id from products limit 1), 'stock_in', 1, null)$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
+select test_helpers.assert((select count(*) = 1 from profiles), 'sees only own profile');
+-- own product in own store
+insert into products (store_id, name, selling_price) select v::uuid, 'Nina Special', 99 from test_helpers.vars where k='store_new';
+select test_helpers.expect_error($$select public.register_store('Nina', '{"store_name":"Second Store"}')$$, 'ALREADY_REGISTERED');
+commit;
+-- the original store does not see the new store's product either
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
+select test_helpers.assert((select count(*) = 0 from products where name = 'Nina Special'), 'original store cannot see new store product');
+select test_helpers.expect_error($$select public.register_store('Ada', '{"store_name":"Another"}')$$, 'ALREADY_REGISTERED');
+rollback;
+-- staff of an existing store cannot register a store
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier3'), true);
+set local role anon;
+select test_helpers.expect_error($$select public.register_store('Cid', '{"store_name":"Cid Store"}')$$, 'ALREADY_REGISTERED');
+rollback;
+select test_helpers.assert((public.get_setup_status() -> 'store') = 'null'::jsonb, 'login page is generic with several stores');
+select test_helpers.assert((select count(*) > 0 from audit_logs where action = 'register'), 'registration audited');
+
 \echo 'ALL DATABASE TESTS PASSED'

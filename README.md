@@ -108,7 +108,8 @@ cd android && ./gradlew assembleDebug
 ### Already installed? Add new modules
 
 If your database was set up **before** the *Today's Menu* module existed, run `supabase/upgrades/add_daily_menu.sql`
-once (Supabase → SQL Editor → paste → Run). It is safe to run twice. A fresh `setup.sql` already includes it.
+once (Supabase → SQL Editor → paste → Run). Likewise, for store **registration** run `supabase/upgrades/add_store_registration.sql`.
+Both are safe to run twice; a fresh `setup.sql` already includes them.
 
 The menu link uses the website's own address. In the Android app it uses `PUBLIC_APP_URL` in `web/js/config.js`
 (set to this repository's GitHub Pages site) — change it if the website is hosted elsewhere.
@@ -125,6 +126,11 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
 - **Setup wizard:** administrator → store info (₱ PHP, Asia/Manila, DD/MM/YYYY, receipt footer, logo) → "Your store is ready!".
   The first-administrator claim is a single atomic database operation, so two people registering at the same time cannot both become admin.
   Registration never appears again afterwards.
+- **Registration (new stores):** after the first setup, the login page shows **"New business? Create a store account"**.
+  Anyone can sign up with their name, email, password and store details and becomes the administrator of their **own** store.
+  Stores are completely separate: each sees only its own products, stock, sales, expenses, staff, menu and audit log
+  (enforced by the database). One account belongs to one store. If a sign-up is interrupted, signing in continues it.
+  With several stores, the login page shows the generic "POS System" title instead of one store's logo.
 - **Login:** remember me, show/hide password, forgot password, clear error messages, deactivated-account blocking, session expiry handling.
 - **Roles:** Administrator (everything) and Cashier (dashboard, cashier, products view-only, own sales). Enforced by the database.
 - **Dashboard:** today's sales, transactions, cash vs card/e-wallet, products, low stock, sales chart, recent sales, best sellers, quick actions.
@@ -174,7 +180,7 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
 ## Tests
 
 The database suite runs `setup.sql` on a local PostgreSQL and checks permissions, the atomic admin claim, sales math, discounts,
-tax, overselling, refunds, immutability, store isolation, the public menu link and rejection of tokens from other Firebase projects:
+tax, overselling, refunds, immutability, store isolation, the public menu link, store registration and rejection of tokens from other Firebase projects:
 
 ```bash
 ./supabase/tests/run_db_tests.sh
