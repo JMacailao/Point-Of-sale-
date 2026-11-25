@@ -10,6 +10,7 @@ const PAGES = {
   dashboard: () => import('./pages/dashboard.js'),
   cashier: () => import('./pages/cashier.js'),
   products: () => import('./pages/products.js'),
+  menu: () => import('./pages/menu.js'),
   inventory: () => import('./pages/inventory.js'),
   users: () => import('./pages/users.js'),
   sales: () => import('./pages/sales.js'),

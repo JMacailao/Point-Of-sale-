@@ -337,4 +337,52 @@ select test_helpers.assert((select count(*) > 0 from audit_logs where module = '
 select test_helpers.assert((select count(*) > 0 from audit_logs where module = 'sales' and action = 'refund'), 'refund audit');
 select test_helpers.assert((select bool_and(user_id is not null) from audit_logs where module in ('products','sales','store_members') and store_id = (select v::uuid from test_helpers.vars where k='store1')), 'audit actor captured');
 
+\echo '14. daily menu: admin picks products, public link shows only menu data'
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
+select public.create_store_member(v::uuid, 'uid-cashier3', 'cashier3@example.com', 'Cid Cashier', 'cashier') from test_helpers.vars where k='store1';
+commit;
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier3'), true);
+set local role anon;
+select test_helpers.expect_error(format($$select public.get_menu(%L)$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
+select test_helpers.expect_error(format($$select public.save_menu(%L, current_date, '{}')$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
+rollback;
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
+insert into test_helpers.vars select 'menu_token', public.get_menu(v::uuid) ->> 'token' from test_helpers.vars where k='store1';
+select test_helpers.assert((select v ~ '^[a-f0-9]{32}$' from test_helpers.vars where k='menu_token'), 'token created');
+select test_helpers.assert((public.get_menu(v::uuid) ->> 'saved')::boolean = false, 'no menu yet') from test_helpers.vars where k='store1';
+-- bread first, cola second; duplicates and foreign/unknown ids dropped
+select public.save_menu(s.v::uuid, (public.get_menu(s.v::uuid) ->> 'today')::date,
+  array[(select id from products where sku='BREAD'), (select id from products where sku='COLA-330'),
+        (select id from products where sku='BREAD'), gen_random_uuid()], '  Free delivery nearby  ', true)
+  from test_helpers.vars s where s.k='store1';
+select test_helpers.assert(jsonb_array_length(public.get_menu(v::uuid) -> 'product_ids') = 2, 'two products saved') from test_helpers.vars where k='store1';
+select test_helpers.expect_error($$select * from public.daily_menus$$, 'permission denied');
+select test_helpers.expect_error($$select * from public.menu_links$$, 'permission denied');
+commit;
+-- anyone with the link (no token at all)
+begin;
+select set_config('request.jwt.claims', '', true);
+set local role anon;
+select test_helpers.assert((select jsonb_array_length(public.get_public_menu(v) -> 'items') = 2 from test_helpers.vars where k='menu_token'), 'public menu has two items');
+select test_helpers.assert((select public.get_public_menu(v) -> 'items' -> 0 ->> 'name' = 'Bread' from test_helpers.vars where k='menu_token'), 'menu order kept');
+select test_helpers.assert((select public.get_public_menu(v) ->> 'note' = 'Free delivery nearby' from test_helpers.vars where k='menu_token'), 'note trimmed');
+select test_helpers.assert((select not (public.get_public_menu(v) -> 'items' -> 0 ? 'cost_price') and not (public.get_public_menu(v) -> 'items' -> 0 ? 'stock_quantity') from test_helpers.vars where k='menu_token'), 'no cost or stock exposed');
+select test_helpers.assert((select jsonb_array_length(public.get_public_menu(v, (public.get_public_menu(v) ->> 'today')::date + 1) -> 'items') = 0 from test_helpers.vars where k='menu_token'), 'other day empty');
+select test_helpers.expect_error($$select public.get_public_menu('0123456789abcdef0123456789abcdef')$$, 'NOT_FOUND');
+select test_helpers.expect_error($$select public.save_menu(gen_random_uuid(), current_date, '{}')$$, 'NOT_AUTHENTICATED');
+rollback;
+-- resetting the link invalidates the old one
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
+select public.reset_menu_link(v::uuid) from test_helpers.vars where k='store1';
+select test_helpers.expect_error(format($$select public.get_public_menu(%L)$$, (select v from test_helpers.vars where k='menu_token')), 'NOT_FOUND');
+rollback;
+select test_helpers.assert((select count(*) > 0 from audit_logs where module = 'menu' and action = 'menu.save'), 'menu audit');
+
 \echo 'ALL DATABASE TESTS PASSED'

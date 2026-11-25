@@ -308,3 +308,11 @@ dl.totals .grand { border-top: 1px solid var(--border); margin-top: 4px; padding
 .scan-log li { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--border); }
 .scan-log li.ok .icon { color: var(--success); } .scan-log li.bad { color: var(--danger-text); }
 .pay-tile:disabled { opacity: .5; cursor: not-allowed; }
+
+/* ---------- today's menu (admin) ---------- */
+.menu-pick .tick { position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 6px; border: 1.5px solid var(--border-2); background: #fff; color: #fff; display: flex; align-items: center; justify-content: center; }
+.menu-pick .tick .icon { width: 14px; height: 14px; stroke-width: 3; }
+.menu-pick.on { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 1px var(--primary); }
+.menu-pick.on .tick { background: var(--primary); border-color: var(--primary); }
+.menu-savebar { position: sticky; bottom: calc(60px + env(safe-area-inset-bottom)); z-index: 20; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #fff; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-lg) var(--radius-lg); box-shadow: 0 -2px 12px rgba(20, 35, 26, .08); }
+@media (min-width: 1024px) { .menu-savebar { display: none; } }

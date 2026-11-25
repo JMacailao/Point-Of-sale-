@@ -295,7 +295,7 @@ export async function render(main, params) {
     const st = { module: '', page: 1 }
     const load = async () => {
       root.innerHTML = `<section class="panel"><div class="panel-head"><h2>Audit Log</h2><select class="input input-auto" id="mod" aria-label="Module">
-        <option value="">All modules</option>${options(['auth', 'setup', 'sales', 'products', 'categories', 'expenses', 'store_members', 'stores', 'profiles'].map((x) => [x, x.replace('_', ' ')]), st.module)}</select></div><div id="list">${spinnerBlock()}</div></section>`
+        <option value="">All modules</option>${options(['auth', 'setup', 'sales', 'products', 'categories', 'expenses', 'store_members', 'stores', 'profiles', 'menu'].map((x) => [x, x.replace('_', ' ')]), st.module)}</select></div><div id="list">${spinnerBlock()}</div></section>`
       root.querySelector('#mod').onchange = (e) => { st.module = e.target.value; st.page = 1; load() }
       const box = root.querySelector('#list')
       try {

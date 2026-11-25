@@ -10,6 +10,11 @@ export const firebaseConfig = {
 export const SUPABASE_URL = 'https://qnkknretbojqohiitjje.supabase.co'
 export const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_5OIrWy_kR-UsGO34-iDPkw_MkWxXJuz'
 
+// Public address of the website (the folder that holds menu.html), used for the
+// shareable "Today's Menu" link when the app runs inside the Android app.
+// On the website the link is built from the page's own address instead.
+export const PUBLIC_APP_URL = 'https://jmacailao.github.io/Point-Of-sale-/web/'
+
 // Local testing only: point at the Firebase Auth emulator / a local API by
 // setting localStorage keys (never used in production unless set by hand).
 function local(key) { try { return localStorage.getItem(key) } catch { return null } }

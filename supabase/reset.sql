@@ -21,7 +21,7 @@ $$;
 
 -- Tables (and their triggers, policies, indexes)
 drop table if exists
-  public.audit_logs, public.expenses, public.stock_movements, public.payments, public.sale_items, public.sales,
+  public.daily_menus, public.menu_links, public.audit_logs, public.expenses, public.stock_movements, public.payments, public.sale_items, public.sales,
   public.products, public.categories, public.store_members, public.stores, public.role_permissions,
   public.permissions, public.roles, public.system_settings, public.profiles
   cascade;
@@ -41,7 +41,7 @@ begin
        'list_movements','list_products','list_roles','list_sale_cashiers','list_sales','lookup_product',
        'process_sale','record_auth_event','refund_sale','sales_report','save_category','save_expense',
        'save_product','set_product_active','update_my_profile','update_store_member','update_store_settings',
-       'user_activity','void_expense')
+       'user_activity','void_expense','get_menu','save_menu','reset_menu_link','get_public_menu')
   loop
     execute format('drop function if exists %s cascade', f.sig);
   end loop;
