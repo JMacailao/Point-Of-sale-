@@ -128,6 +128,8 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
 - **Expenses:** add/edit with audit history, void instead of delete, filters, export.
 - **Reports:** daily/weekly/monthly/annual gross sales, discounts, refunds, net sales, tax, cost of goods (from cost at time of sale),
   gross and net profit, top products, payments, cashiers, inventory valuation; export and Print/PDF.
+- **Sales by Item report:** every item sold in a period — quantity, transactions, average price, sales, cost, profit, % of sales
+  and refunded quantity, with a total row, search, category filter, sorting, "include items with no sales", Excel export and Print/PDF.
 - **Camera barcode scanner:** scan with the phone/tablet camera or a webcam on the Cashier screen (continuous scanning, each item counted once
   while held in view) and in the product form. Uses the browser's built-in detector, or the ZXing reader loaded from the jsDelivr CDN. Needs HTTPS.
 - **Bluetooth receipt printer:** Settings → Printer & Scanner → *Bluetooth printer* → **Find Bluetooth printers** opens the list of nearby
@@ -168,6 +170,9 @@ tax, overselling, refunds, immutability, store isolation and rejection of tokens
 The full browser flow (setup → products → barcode sale → GCash sale → refund → users → stock → expenses → reports →
 logout/login → cashier permissions → deactivation → mobile layout) was exercised end-to-end in Chromium against the
 Firebase Auth emulator and a local PostgreSQL with `setup.sql`.
+
+**Upgrading an existing database:** if `setup.sql` was run before a feature was added, run the matching file in
+`supabase/upgrades/` once in the SQL Editor (for example `001_sales_by_item.sql` for the Sales by Item report).
 
 If an administrator was registered but store setup was never finished, `supabase/scripts/reset_initial_setup.sql`
 resets the claim (it refuses to run once a store exists).
