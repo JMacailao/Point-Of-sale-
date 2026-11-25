@@ -57,8 +57,8 @@ Upload the **`web`** folder to any static host — no build command:
 
 - **Netlify:** drag-and-drop the `web` folder at app.netlify.com/drop
 - **Vercel:** import the repo, Root Directory `web`, Framework *Other*, no build command
-- **GitHub Pages:** repo **Settings → Pages → Source: GitHub Actions**. The included workflow
-  (`.github/workflows/deploy-pages.yml`) publishes `web/` on every push. Site: `https://<user>.github.io/<repo>/`.
+- **GitHub Pages:** repo **Settings → Pages → Source: Deploy from a branch**, pick the branch and **/ (root)**.
+  The top-level `index.html` forwards visitors to the app in `web/`. Site: `https://<user>.github.io/<repo>/`.
   Add `<user>.github.io` to Firebase authorized domains.
 - **Firebase Hosting / cPanel:** upload the contents of `web`
 
