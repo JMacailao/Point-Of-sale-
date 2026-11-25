@@ -294,3 +294,17 @@ dl.totals .grand { border-top: 1px solid var(--border); margin-top: 4px; padding
   html, body { background: #fff; }
 }
 @media (min-width: 768px) { .hide-md-up { display: none !important; } }
+
+/* ---------- camera scanner ---------- */
+.scanner-view { position: relative; background: #0b1410; border-radius: var(--radius-lg); overflow: hidden; aspect-ratio: 4 / 3; max-height: 56dvh; }
+.scanner-view video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scanner-frame { position: absolute; left: 12%; right: 12%; top: 30%; bottom: 30%; border: 3px solid rgba(255,255,255,.9); border-radius: 12px; box-shadow: 0 0 0 9999px rgba(0,0,0,.35); pointer-events: none; }
+.scanner-frame::after { content: ''; position: absolute; left: 6%; right: 6%; top: 50%; height: 2px; background: #22c55e; box-shadow: 0 0 8px #22c55e; animation: scanline 1.6s ease-in-out infinite; }
+@keyframes scanline { 0%, 100% { transform: translateY(-38px); } 50% { transform: translateY(38px); } }
+@media (prefers-reduced-motion: reduce) { .scanner-frame::after { animation: none; } }
+.scanner-status { position: absolute; left: 8px; right: 8px; bottom: 8px; margin: 0; padding: 6px 10px; border-radius: 6px; background: rgba(0,0,0,.6); color: #fff; font-size: 13px; text-align: center; }
+.scanner-status.error { background: rgba(185,28,28,.9); }
+.scan-log { list-style: none; margin: 8px 0 0; padding: 0; max-height: 120px; overflow-y: auto; font-size: 13px; }
+.scan-log li { display: flex; align-items: center; gap: 6px; padding: 4px 0; border-bottom: 1px solid var(--border); }
+.scan-log li.ok .icon { color: var(--success); } .scan-log li.bad { color: var(--danger-text); }
+.pay-tile:disabled { opacity: .5; cursor: not-allowed; }

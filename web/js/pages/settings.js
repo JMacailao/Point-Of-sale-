@@ -3,6 +3,8 @@ import { session, can, store } from '../session.js'
 import { pageHead } from '../layout.js'
 import { changePassword, firebaseMessage } from '../firebase.js'
 import { printReceipt } from '../receipt.js'
+import { openCameraScanner, cameraSupported } from '../scanner.js'
+import { bluetoothSupported, savedPrinter, isConnected, choosePrinter, forgetPrinter, reconnect, printMethod, setPrintMethod } from '../btprinter.js'
 import { scannerEnabled } from './cashier.js'
 import { summary } from './users.js'
 import {
@@ -114,25 +116,70 @@ export async function render(main, params) {
 
   function devicesTab(root) {
     const s = store()
-    root.innerHTML = `${panel('Printer Settings', `
-      <div class="setting-row">${icon('printer')}<div class="grow"><p class="bold">Receipt printer</p>
-        <p class="small muted">Receipts print through this device's print dialog. Install your USB/network thermal printer in the operating system (on Android, use a print service app that supports your printer), then choose it in the print dialog. Direct Bluetooth printing is not built in.</p></div></div>
-      <div class="row-wrap">${field('Receipt paper size', `<select id="paper" class="input input-auto" ${admin ? '' : 'disabled'}>${options([['58mm', '58mm thermal'], ['80mm', '80mm thermal'], ['a4', 'A4 / Letter (standard printer)']], s.receipt_paper)}</select>`, { id: 'paper' })}
-        ${admin ? '<button class="btn btn-secondary" id="save-paper" style="margin-top:6px">Save</button>' : ''}
-        <button class="btn btn-primary" id="test" style="margin-top:6px">${icon('printer')} Test Print</button></div>`)}
-      ${panel('Scanner Settings', `<div class="setting-row">${icon('scan')}<div class="grow"><p class="bold">Enable barcode scanner</p>
-        <p class="small muted">USB/Bluetooth scanners that type like a keyboard add products instantly on the Cashier screen. Saved on this device.</p></div>
-        <label class="switch"><input type="checkbox" id="scanner" ${scannerEnabled() ? 'checked' : ''} aria-label="Enable barcode scanner"><span></span></label></div>`)}`
-    root.querySelector('#scanner').onchange = (e) => {
-      try { localStorage.setItem('pos.scannerEnabled', String(e.target.checked)) } catch { /* ignore */ }
-      toast.success(e.target.checked ? 'Scanner enabled on this device' : 'Scanner disabled on this device')
-    }
-    root.querySelector('#save-paper')?.addEventListener('click', (e) => save({ receipt_paper: root.querySelector('#paper').value }, e.currentTarget))
-    root.querySelector('#test').onclick = () => printReceipt({
+    const sample = () => ({
       transaction_number: 'TEST-PRINT', created_at: new Date().toISOString(), cashier_name: session.ctx.user.fullName || session.ctx.user.email,
       status: 'completed', items: [{ id: 1, product_name: 'Sample item', quantity: 2, unit_price: 25, subtotal: 50 }],
       subtotal: 50, discount: 0, tax_amount: 0, total_amount: 50, payment_method: 'cash', amount_received: 100, change_amount: 50, payments: [],
-    }, store(), root.querySelector('#paper').value)
+    })
+    function drawPrinter() {
+      const method = printMethod()
+      const saved = savedPrinter()
+      const btOk = bluetoothSupported()
+      return panel('Printer Settings', `
+        <p class="label">How should receipts print on this device?</p>
+        <div class="pay-tiles" style="grid-template-columns:repeat(2,1fr)">
+          <button type="button" class="pay-tile" data-method="dialog" aria-pressed="${method === 'dialog'}">${icon('printer')}Printers on this device<span class="small muted" style="font-weight:400">USB, Wi-Fi, network, Android print service</span></button>
+          <button type="button" class="pay-tile" data-method="bluetooth" aria-pressed="${method === 'bluetooth'}" ${btOk ? '' : 'disabled'}>${icon('bluetooth')}Bluetooth printer<span class="small muted" style="font-weight:400">${btOk ? 'Direct to a Bluetooth thermal printer' : 'Not supported in this browser'}</span></button>
+        </div>
+        ${method === 'dialog' ? `<p class="small muted mt">When you print, the device's print window opens and lists every printer installed on this device — choose your receipt printer there.</p>` : ''}
+        ${method === 'bluetooth' ? `<div class="setting-row mt">${icon('bluetooth')}<div class="grow">
+            <p class="bold">${saved ? esc(saved.name) : 'No printer connected'}</p>
+            <p class="small ${saved && isConnected() ? 'text-green' : 'muted'}" id="bt-state">${saved ? (isConnected() ? 'Connected' : 'Saved — reconnects when you print') : 'Turn your printer on, then press “Find Bluetooth printers”.'}</p></div>
+            <div class="row-wrap">${saved ? '<button class="btn btn-ghost btn-sm" id="bt-forget">Forget</button>' : ''}<button class="btn btn-primary" id="bt-find">${icon('search')} Find Bluetooth printers</button></div></div>
+          <p class="small muted">A list of nearby Bluetooth devices opens — pick your printer. Works in Chrome/Edge on Android, Windows and Mac with Bluetooth (BLE) thermal printers. iPhone/iPad: use “Printers on this device”.</p>` : ''}
+        ${!btOk ? `<p class="small muted mt">Bluetooth printing needs Chrome or Edge on Android, Windows or Mac${window.isSecureContext ? '' : ' and an HTTPS address'}.</p>` : ''}
+        <div class="row-wrap mt">${field('Receipt paper size', `<select id="paper" class="input input-auto" ${admin ? '' : 'disabled'}>${options([['58mm', '58mm thermal'], ['80mm', '80mm thermal'], ['a4', 'A4 / Letter (standard printer)']], store().receipt_paper)}</select>`, { id: 'paper' })}
+          ${admin ? '<button class="btn btn-secondary" id="save-paper" style="margin-top:6px">Save</button>' : ''}
+          <button class="btn btn-primary" id="test" style="margin-top:6px">${icon('printer')} Test Print</button></div>`)
+    }
+    function drawScanner() {
+      return panel('Scanner Settings', `
+        <div class="setting-row">${icon('scan')}<div class="grow"><p class="bold">USB / Bluetooth barcode scanner</p>
+          <p class="small muted">Scanners that type like a keyboard add products instantly on the Cashier screen. Turn this off if you have no scanner: the Cashier screen then shows a large “Scan with camera” button.</p></div>
+          <label class="switch"><input type="checkbox" id="scanner" ${scannerEnabled() ? 'checked' : ''} aria-label="Enable barcode scanner"><span></span></label></div>
+        <div class="setting-row">${icon('camera')}<div class="grow"><p class="bold">Camera scanner</p>
+          <p class="small muted">${cameraSupported() ? 'Scan barcodes with the phone or tablet camera, or a webcam — always available on the Cashier screen and in the product form.' : 'The camera needs an HTTPS address and a browser with camera access.'}</p></div>
+          <button class="btn btn-secondary" id="cam-test" ${cameraSupported() ? '' : 'disabled'}>${icon('camera')} Test camera</button></div>`)
+    }
+    function draw() {
+      root.innerHTML = drawPrinter() + drawScanner()
+      root.querySelectorAll('[data-method]').forEach((b) => { b.onclick = () => { setPrintMethod(b.dataset.method); draw() } })
+      root.querySelector('#bt-find')?.addEventListener('click', async (e) => {
+        const btn = e.currentTarget
+        try {
+          const pending = choosePrinter() // must start inside the click: opens the list of nearby devices
+          setBusy(btn, true, 'Connecting…')
+          const p = await pending
+          toast.success(`Connected to ${p.name}`)
+          draw()
+        } catch (err) { setBusy(btn, false); if (err.code !== 'CANCELLED') toast.error(err) }
+      })
+      root.querySelector('#bt-forget')?.addEventListener('click', () => { forgetPrinter(); toast.info('Printer forgotten'); draw() })
+      root.querySelector('#scanner').onchange = (e) => {
+        try { localStorage.setItem('pos.scannerEnabled', String(e.target.checked)) } catch { /* ignore */ }
+        toast.success(e.target.checked ? 'Hardware scanner on' : 'Hardware scanner off — camera scanning is the main option')
+      }
+      root.querySelector('#cam-test').onclick = async () => {
+        const code = await openCameraScanner({ title: 'Test camera scanner' })
+        if (code) toast.success(`Scanned: ${code}`)
+      }
+      root.querySelector('#save-paper')?.addEventListener('click', (e) => save({ receipt_paper: root.querySelector('#paper').value }, e.currentTarget))
+      root.querySelector('#test').onclick = () => printReceipt(sample(), store(), root.querySelector('#paper').value)
+      if (printMethod() === 'bluetooth' && savedPrinter() && !isConnected()) {
+        reconnect().then((ok) => { const el = root.querySelector('#bt-state'); if (ok && el) { el.textContent = 'Connected'; el.className = 'small text-green' } })
+      }
+    }
+    draw()
   }
 
   async function rolesTab(root) {

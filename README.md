@@ -99,7 +99,12 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
 - **Expenses:** add/edit with audit history, void instead of delete, filters, export.
 - **Reports:** daily/weekly/monthly/annual gross sales, discounts, refunds, net sales, tax, cost of goods (from cost at time of sale),
   gross and net profit, top products, payments, cashiers, inventory valuation; export and Print/PDF.
-- **Settings:** store info & logo, tax, discounts, inventory, printer (paper size + test print), scanner on/off, roles matrix, profile & password, audit log.
+- **Camera barcode scanner:** scan with the phone/tablet camera or a webcam on the Cashier screen (continuous scanning, each item counted once
+  while held in view) and in the product form. Uses the browser's built-in detector, or the ZXing reader loaded from the jsDelivr CDN. Needs HTTPS.
+- **Bluetooth receipt printer:** Settings → Printer & Scanner → *Bluetooth printer* → **Find Bluetooth printers** opens the list of nearby
+  Bluetooth devices; pick the printer and receipts print directly (ESC/POS, 58mm/80mm). Chrome/Edge on Android, Windows, macOS, ChromeOS,
+  with Bluetooth Low Energy thermal printers. Otherwise “Printers on this device” uses the print window, which lists every installed printer.
+- **Settings:** store info & logo, tax, discounts, inventory, printer (method, Bluetooth printer, paper size, test print), scanner on/off + camera test, roles matrix, profile & password, audit log.
 
 ## Security notes
 
@@ -116,7 +121,10 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
   that needs Firebase Admin (a server). They can sign in to Firebase but see only "account deactivated".
 - Cashiers cannot see cost prices in the app, but a technically skilled cashier could read them through the database API.
 - Refunds are full refunds. Role permissions are a fixed matrix. One store is created by setup.
-- Printing uses the browser print dialog (USB/network thermal printers, Android print services); no direct Bluetooth printing.
+- Direct Bluetooth printing needs Chrome/Edge (not iPhone/iPad or Firefox) and a Bluetooth **Low Energy** printer; classic-Bluetooth-only
+  printers must be paired in the operating system and used through the print window. Bluetooth receipts are text only (no logo).
+- A website cannot list the printers installed on a computer or detect whether a USB/Bluetooth barcode scanner is connected:
+  the print window shows the installed printers, and the hardware-scanner switch in Settings controls whether the camera button is the main scan option.
 - "Excel" import/export uses CSV files, which Excel opens and saves.
 
 ## Tests

@@ -1,4 +1,5 @@
-import { esc, money, fmtDate, fmtTime, PAYMENT } from './util.js'
+import { esc, money, fmtDate, fmtTime, PAYMENT, openModal, toast, setBusy } from './util.js'
+import { printMethod, printViaBluetooth, choosePrinter, savedPrinter } from './btprinter.js'
 
 // Thermal rolls are continuous: the page height is set to the measured receipt height at print time.
 const PAPER = {
@@ -42,10 +43,39 @@ export function receiptHtml(sale, store, paper = store?.receipt_paper || '80mm')
 }
 
 /**
- * Prints through the browser print dialog: works with OS-installed USB/network
- * thermal printers and Android print services (no direct Bluetooth printing).
+ * Prints a receipt with the method chosen in Settings > Printer & Scanner:
+ *  - "bluetooth": straight to the connected Bluetooth thermal printer (ESC/POS)
+ *  - "dialog":    the browser/system print dialog (USB, network, Android print services)
  */
 export async function printReceipt(sale, store, paper) {
+  if (printMethod() !== 'bluetooth') return printWithDialog(sale, store, paper)
+  try {
+    await printViaBluetooth(sale, store, paper || store?.receipt_paper)
+    toast.success('Receipt sent to the Bluetooth printer')
+  } catch (err) {
+    const saved = savedPrinter()
+    const md = openModal({
+      title: 'Bluetooth printer', size: 'sm',
+      body: `<p>${esc(err.code === 'NOT_CONNECTED' ? `${saved ? `"${saved.name}"` : 'The Bluetooth printer'} is not connected. Turn the printer on and keep it near this device.` : err.message)}</p>`,
+      footer: '<button class="btn btn-secondary" id="use-dialog">Use print dialog</button><button class="btn btn-primary" id="connect">Connect printer</button>',
+    })
+    md.el.querySelector('#use-dialog').onclick = () => { md.close(); printWithDialog(sale, store, paper) }
+    md.el.querySelector('#connect').onclick = async (e) => {
+      const btn = e.currentTarget
+      try {
+        const p = choosePrinter() // opens the browser's list of nearby Bluetooth devices
+        setBusy(btn, true, 'Connecting…')
+        await p
+        await printViaBluetooth(sale, store, paper || store?.receipt_paper)
+        md.close()
+        toast.success('Receipt sent to the Bluetooth printer')
+      } catch (e2) { setBusy(btn, false); if (e2.code !== 'CANCELLED') toast.error(e2) }
+    }
+  }
+}
+
+/** Browser print dialog (any printer installed on the device). */
+export async function printWithDialog(sale, store, paper) {
   const size = paper || store?.receipt_paper || '80mm'
   const c = PAPER[size] || PAPER['80mm']
   const root = document.getElementById('print-root')

@@ -1,6 +1,7 @@
 import { rpc } from '../api.js'
 import { can, store } from '../session.js'
 import { receiptHtml, printReceipt } from '../receipt.js'
+import { openCameraScanner } from '../scanner.js'
 import {
   esc, icon, money, toCents, fromCents, debounce, openModal, confirmDialog, toast, setBusy, newRequestId,
   spinnerBlock, emptyBlock, PAYMENT,
@@ -25,7 +26,8 @@ export async function render(main) {
     <div class="pos-grid">
       <section class="pos-pane" id="pane-products">
         <div class="pos-search">
-          <div class="wrap">${icon('search', 'l')}<input id="q" class="input" placeholder="Search product, SKU or scan barcode…" aria-label="Search products or scan barcode" autocomplete="off">${icon('scan', 'r')}</div>
+          <div class="row"><div class="wrap grow">${icon('search', 'l')}<input id="q" class="input" placeholder="Search product, SKU or scan barcode…" aria-label="Search products or scan barcode" autocomplete="off"></div>
+            <button class="btn ${scannerEnabled() ? 'btn-secondary' : 'btn-primary'}" id="cam-scan" style="height:40px" aria-label="Scan barcode with camera" title="Scan with camera">${icon('camera')}<span class="hide-sm">${scannerEnabled() ? '' : 'Scan with camera'}</span></button></div>
           <div class="chips" id="chips"></div>
         </div>
         <div class="scroll" id="plist">${spinnerBlock()}</div>
@@ -132,12 +134,18 @@ export async function render(main) {
   }
 
   // -------------------------------------------------------------- cart ops
-  function addProduct(p, qty = 1) {
+  function addProduct(p, qty = 1, { silent = false } = {}) {
     const line = st.cart.find((c) => c.product.id === p.id)
     const next = (line?.quantity || 0) + qty
-    if (next > p.stock_quantity) return toast.error(p.stock_quantity === 0 ? `${p.name} is out of stock` : `Only ${p.stock_quantity} of ${p.name} in stock`)
+    if (next > p.stock_quantity) {
+      const msg = p.stock_quantity === 0 ? `${p.name} is out of stock` : `Only ${p.stock_quantity} of ${p.name} in stock`
+      if (silent) throw new Error(msg)
+      toast.error(msg)
+      return false
+    }
     if (line) { line.quantity = next; line.product = p } else st.cart.push({ product: p, quantity: qty })
     renderCart(); renderProducts()
+    return next
   }
   function setQty(id, qty) {
     const line = st.cart.find((c) => c.product.id === id)
@@ -269,6 +277,16 @@ export async function render(main) {
       return confirmDialog({ title: 'Cancel transaction?', message: 'All items in the cart will be removed.', confirmLabel: 'Clear Cart', onConfirm: () => { reset(); q.focus() } })
     }
     if (t.id === 'pay') return openPayment()
+    if (t.id === 'cam-scan') {
+      return openCameraScanner({
+        title: 'Scan products', continuous: true,
+        onCode: async (code) => {
+          const p = await rpc('lookup_product', { p_store_id: s.id, p_code: code })
+          const qty = addProduct(p, 1, { silent: true })
+          return `${p.name} — ${qty} in cart`
+        },
+      })
+    }
   })
   main.addEventListener('change', (e) => {
     if (e.target.dataset.qty) setQty(e.target.dataset.qty, Number(e.target.value))

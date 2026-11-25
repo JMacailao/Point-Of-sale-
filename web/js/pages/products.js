@@ -1,6 +1,7 @@
 import { rpc, uploadImage } from '../api.js'
 import { can, store } from '../session.js'
 import { pageHead } from '../layout.js'
+import { openCameraScanner } from '../scanner.js'
 import {
   esc, icon, money, debounce, openModal, confirmDialog, toast, setBusy, showErrors, field, options, badge, pager,
   spinnerBlock, emptyBlock, errorBlock, imagePicker, bindImagePicker, downloadCsv,
@@ -106,7 +107,8 @@ export async function render(main) {
       body: `<form id="pf" class="grid-2" novalidate>
         ${field('Product Name', `<input id="name" class="input" maxlength="160" value="${esc(p?.name)}">`, { id: 'name', required: true, cls: 'span-2' })}
         ${field('SKU', `<input id="sku" class="input" maxlength="64" value="${esc(p?.sku)}">`, { id: 'sku' })}
-        ${field('Barcode', `<input id="barcode" class="input" maxlength="64" value="${esc(p?.barcode)}">`, { id: 'barcode', hint: 'Scan into this field with a barcode scanner.' })}
+        ${field('Barcode', `<div class="row"><input id="barcode" class="input grow" maxlength="64" value="${esc(p?.barcode)}">
+          <button type="button" class="btn btn-secondary" id="bc-cam" aria-label="Scan barcode with camera" title="Scan with camera">${icon('camera')}</button></div>`, { id: 'barcode', hint: 'Type it, use a barcode scanner, or scan with the camera.' })}
         ${field('Category', `<select id="category_id" class="input"><option value="">Uncategorized</option>${options(categories.map((c) => [c.id, c.name]), p?.category_id)}</select>`, { id: 'category_id' })}
         ${field('Minimum Stock', `<input id="minimum_stock" class="input" type="number" min="0" value="${esc(p?.minimum_stock ?? s.default_low_stock_threshold)}">`, { id: 'minimum_stock', hint: 'Low-stock alert threshold.' })}
         ${field('Cost Price (₱)', `<input id="cost_price" class="input" type="number" min="0" step="0.01" inputmode="decimal" value="${esc(p?.cost_price ?? '')}">`, { id: 'cost_price' })}
@@ -120,6 +122,10 @@ export async function render(main) {
     })
     const el = md.el
     const img = bindImagePicker(el, 'pimg', p?.image_url)
+    el.querySelector('#bc-cam').onclick = async () => {
+      const code = await openCameraScanner({ title: 'Scan product barcode' })
+      if (code) { el.querySelector('#barcode').value = code; toast.success(`Barcode ${code} captured`) }
+    }
     el.querySelector('#pf').onsubmit = (e) => { e.preventDefault(); el.querySelector('#save').click() }
     el.querySelector('#save').onclick = async (e) => {
       const v = (id) => el.querySelector(`#${id}`)?.value.trim() ?? ''
