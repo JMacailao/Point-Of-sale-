@@ -29,6 +29,12 @@ supabase/tests/          database test suite
 2. Open `supabase/setup.sql`, copy **everything**, paste it, click **Run**. (Run it once, on a fresh project.)
 3. Check: `select * from system_settings;` returns one row.
 
+If it stops with an error, nothing was changed (it runs as one transaction):
+- **"POS database is ALREADY INSTALLED"** → it already worked earlier; go to step 2.
+- **"already has tables with the same names"** (or `relation "system_settings" already exists`) → this project
+  contains another app's tables. Use a **new, empty Supabase project** (recommended), or, only if that data is not
+  needed, run `supabase/reset.sql` (deletes those tables) and then `setup.sql` again.
+
 ### 2. Supabase — accept Firebase logins
 
 Supabase → **Authentication** → **Sign In / Providers** → **Third-Party Auth** → **Add provider** →

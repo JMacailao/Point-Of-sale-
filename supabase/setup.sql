@@ -20,6 +20,29 @@
 
 
 -- ############################################################################
+-- PRE-CHECK: stop with a clear message (changing nothing) if this project
+-- already has the POS database or other tables with the same names.
+-- ############################################################################
+do $$
+declare
+  v_existing text;
+begin
+  if exists (select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+             where n.nspname = 'public' and p.proname = 'claim_initial_admin_self') then
+    raise exception 'The POS database is ALREADY INSTALLED in this project — nothing to do. Continue with the next step (Authentication > Third-Party Auth > Firebase). To wipe it and start over, run supabase/reset.sql first (this deletes all POS data).';
+  end if;
+  select string_agg(table_name, ', ' order by table_name) into v_existing
+    from information_schema.tables
+   where table_schema = 'public'
+     and table_name in ('system_settings','profiles','roles','permissions','role_permissions','stores','store_members',
+                        'categories','products','sales','sale_items','payments','stock_movements','expenses','audit_logs');
+  if v_existing is not null then
+    raise exception 'This Supabase project already has tables with the same names as the POS tables: %. They probably belong to another app. Use a NEW, empty Supabase project (recommended), or — only if that data is not needed — run supabase/reset.sql first, which DELETES these tables.', v_existing;
+  end if;
+end;
+$$;
+
+-- ############################################################################
 -- PART 1 — schema
 -- ############################################################################
 -- =============================================================================
