@@ -15,7 +15,10 @@ export const NAV = [
 ]
 const BOTTOM = ['dashboard', 'cashier', 'products', 'sales']
 
-export const allowedNav = () => NAV.filter((n) => !n.perms || can(...n.perms))
+// A cashier-only account (just pos.use) sees only the Cashier screen. Its
+// printer and password settings stay reachable through the Profile link.
+const cashierOnly = () => (session.ctx?.permissions || []).every((p) => p === 'pos.use')
+export const allowedNav = () => NAV.filter((n) => (n.perms ? can(...n.perms) : !cashierOnly()))
 export const homePath = () => allowedNav()[0]?.path || 'settings'
 
 function brand(s) {
@@ -37,7 +40,7 @@ export function renderShell(app, active) {
       <nav class="side-nav">${navHtml}</nav>
       <div class="side-user">
         <div class="who"><div class="avatar">${esc(initials)}</div><div class="grow"><p class="truncate bold small">${esc(u.fullName || u.email)}</p><p class="truncate small muted">${esc(session.ctx.role?.name || '')}</p></div></div>
-        <div class="acts"><a href="#/settings?tab=profile">${icon('user')} Profile</a><button class="out" data-logout>${icon('logout')} Logout</button></div>
+        <div class="acts"><a href="#/settings?tab=${cashierOnly() ? 'devices' : 'profile'}">${icon(cashierOnly() ? 'settings' : 'user')} ${cashierOnly() ? 'Printer &amp; Profile' : 'Profile'}</a><button class="out" data-logout>${icon('logout')} Logout</button></div>
       </div>
     </aside>
     <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>

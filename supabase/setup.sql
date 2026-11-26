@@ -480,10 +480,11 @@ insert into public.role_permissions (role_id, permission_id)
 select r.id, p.id from public.roles r cross join public.permissions p
 where r.key = 'administrator';
 
--- Cashier: limited
+-- Cashier: the Cashier (POS) screen only. Their own sales stay readable
+-- through pos.use (see sales_select) so receipts can be shown and printed.
 insert into public.role_permissions (role_id, permission_id)
 select r.id, p.id from public.roles r join public.permissions p
-  on p.permission_key in ('dashboard.view','pos.use','products.view','sales.view_own')
+  on p.permission_key in ('pos.use')
 where r.key = 'cashier';
 
 -- -----------------------------------------------------------------------------
@@ -1655,7 +1656,8 @@ create policy sales_select on public.sales for select to authenticated
 using (
   store_id in (select app.permitted_store_ids('sales.view_all'))
   or (cashier_id = (select app.current_profile_id())
-      and store_id in (select app.permitted_store_ids('sales.view_own')))
+      and (store_id in (select app.permitted_store_ids('sales.view_own'))
+           or store_id in (select app.permitted_store_ids('pos.use'))))
 );
 create policy sale_items_select on public.sale_items for select to authenticated
 using (exists (select 1 from public.sales s where s.id = sale_items.sale_id));

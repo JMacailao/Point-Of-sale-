@@ -272,8 +272,11 @@ begin;
 select set_config('request.jwt.claims', test_helpers.claims('uid-cashier'), true);
 set local role anon;
 select test_helpers.expect_error(format($$select public.sales_report(%L, current_date, current_date, 'day')$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
--- cashier dashboard only counts own (refunded) sale
-select test_helpers.assert((public.dashboard_summary(v::uuid, current_date - 1, current_date + 1) ->> 'transactions')::int = 0, 'cashier dashboard scoped to own sales') from test_helpers.vars where k='store1';
+-- cashiers use the Cashier screen only: no dashboard
+select test_helpers.expect_error(format($$select public.dashboard_summary(%L, current_date - 1, current_date + 1)$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
+-- but they can still read their own sales (receipts after checkout)
+select test_helpers.assert((select count(*) > 0 from sales), 'cashier sees own sales for receipts');
+select test_helpers.assert((select bool_and(cashier_id = app.current_profile_id()) from sales), 'cashier sees only own sales');
 rollback;
 
 \echo '11. role protections: self-modification and last administrator'
