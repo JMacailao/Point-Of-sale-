@@ -316,3 +316,8 @@ dl.totals .grand { border-top: 1px solid var(--border); margin-top: 4px; padding
 .menu-pick.on .tick { background: var(--primary); border-color: var(--primary); }
 .menu-savebar { position: sticky; bottom: calc(60px + env(safe-area-inset-bottom)); z-index: 20; display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: #fff; border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-lg) var(--radius-lg); box-shadow: 0 -2px 12px rgba(20, 35, 26, .08); }
 @media (min-width: 1024px) { .menu-savebar { display: none; } }
+
+/* ---------- user access checkboxes ---------- */
+.access-grid { display: grid; gap: 10px; }
+@media (min-width: 640px) { .access-grid { grid-template-columns: 1fr 1fr; } }
+.access-grid fieldset > * + * { margin-top: 8px; }

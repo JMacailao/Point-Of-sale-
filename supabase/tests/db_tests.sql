@@ -431,4 +431,44 @@ rollback;
 select test_helpers.assert((public.get_setup_status() -> 'store') = 'null'::jsonb, 'login page is generic with several stores');
 select test_helpers.assert((select count(*) > 0 from audit_logs where action = 'register'), 'registration audited');
 
+\echo '16. per-user access: administrator ticks what each user can use'
+-- a cashier cannot change access
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier3'), true);
+set local role anon;
+select test_helpers.expect_error(format($$select public.set_member_access(%L, app.current_profile_id(), '{reports.view}')$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
+select test_helpers.assert((public.get_my_context() -> 'permissions') = '["pos.use"]'::jsonb, 'cashier default is cashier screen only');
+rollback;
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
+select test_helpers.expect_error(format($$select public.set_member_access(%L, (select id from profiles where firebase_uid='uid-cashier3'), '{users.manage}')$$, (select v from test_helpers.vars where k='store1')), 'VALIDATION');
+select test_helpers.expect_error(format($$select public.set_member_access(%L, (select id from profiles where firebase_uid='uid-cashier3'), '{}')$$, (select v from test_helpers.vars where k='store1')), 'VALIDATION');
+select test_helpers.expect_error(format($$select public.set_member_access(%L, app.current_profile_id(), '{pos.use}')$$, (select v from test_helpers.vars where k='store1')), 'VALIDATION');
+-- tick: cashier screen + manage products + reports (products.view is added automatically)
+select test_helpers.assert(public.set_member_access(v::uuid, (select id from profiles where firebase_uid='uid-cashier3'), '{pos.use,products.manage,reports.view}')
+  = '["pos.use","products.manage","products.view","reports.view"]'::jsonb, 'manage implies view') from test_helpers.vars where k='store1';
+select test_helpers.assert((select bool_or(m ->> 'email' = 'cashier3@example.com' and (m ->> 'custom_access')::boolean) from jsonb_array_elements(public.list_members(v::uuid)) m), 'list shows custom access') from test_helpers.vars where k='store1';
+commit;
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier3'), true);
+set local role anon;
+select test_helpers.assert((public.get_my_context() -> 'permissions') ? 'reports.view', 'context has ticked access');
+select public.sales_report(v::uuid, current_date, current_date, 'day') is not null from test_helpers.vars where k='store1';
+select public.save_product(v::uuid, null, '{"name":"Staff Added","selling_price":10}') from test_helpers.vars where k='store1';
+select test_helpers.expect_error(format($$select public.dashboard_summary(%L, current_date, current_date)$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
+select test_helpers.expect_error(format($$select public.list_members(%L)$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
+rollback;
+-- back to role defaults
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
+select test_helpers.assert(public.set_member_access(v::uuid, (select id from profiles where firebase_uid='uid-cashier3'), null) = '["pos.use"]'::jsonb, 'reset to role defaults') from test_helpers.vars where k='store1';
+commit;
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier3'), true);
+set local role anon;
+select test_helpers.expect_error(format($$select public.sales_report(%L, current_date, current_date, 'day')$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
+rollback;
+
 \echo 'ALL DATABASE TESTS PASSED'

@@ -108,8 +108,9 @@ cd android && ./gradlew assembleDebug
 ### Already installed? Add new modules
 
 If your database was set up **before** the *Today's Menu* module existed, run `supabase/upgrades/add_daily_menu.sql`
-once (Supabase → SQL Editor → paste → Run). Likewise, for store **registration** run `supabase/upgrades/add_store_registration.sql`, and to limit cashiers to the
-Cashier screen run `supabase/upgrades/cashier_only.sql`.
+once (Supabase → SQL Editor → paste → Run). Likewise, for store **registration** run `supabase/upgrades/add_store_registration.sql`, to limit cashiers to the
+Cashier screen run `supabase/upgrades/cashier_only.sql`, and for per-user access checkboxes run
+`supabase/upgrades/add_user_access.sql` (run them in that order).
 Both are safe to run twice; a fresh `setup.sql` already includes them.
 
 The menu link uses the website's own address. In the Android app it uses `PUBLIC_APP_URL` in `web/js/config.js`
@@ -133,8 +134,10 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
   (enforced by the database). One account belongs to one store. If a sign-up is interrupted, signing in continues it.
   With several stores, the login page shows the generic "POS System" title instead of one store's logo.
 - **Login:** remember me, show/hide password, forgot password, clear error messages, deactivated-account blocking, session expiry handling.
-- **Roles:** Administrator (everything) and Cashier (**the Cashier screen only** — product search, scanning, checkout and receipts for their own sales;
-  plus their printer setup and password). Enforced by the database.
+- **Roles & access:** Administrator (everything) and Staff. For each staff member the administrator **ticks what they can use**
+  in Create/Edit User: Cashier screen, discounts, Dashboard, view/edit products, view/change stock, own/all sales, refunds,
+  expenses, reports and Today's Menu. New staff start with the Cashier screen only. Managing users and store settings is
+  administrator-only. Enforced by the database (not just hidden in the app).
 - **Dashboard:** today's sales, transactions, cash vs card/e-wallet, products, low stock, sales chart, recent sales, best sellers, quick actions.
 - **Cashier:** product cards, search, categories, USB barcode scanners, cart with stock limits, discounts (by permission/limit), VAT inclusive/exclusive,
   payment window (Cash, GCash, Maya, Card/Other) with change and reference number, double-click-safe checkout, receipt.
@@ -182,7 +185,7 @@ details (logo optional) → **Go to Dashboard**. From then on everyone sees the 
 ## Tests
 
 The database suite runs `setup.sql` on a local PostgreSQL and checks permissions, the atomic admin claim, sales math, discounts,
-tax, overselling, refunds, immutability, store isolation, the public menu link, store registration and rejection of tokens from other Firebase projects:
+tax, overselling, refunds, immutability, store isolation, the public menu link, store registration, per-user access and rejection of tokens from other Firebase projects:
 
 ```bash
 ./supabase/tests/run_db_tests.sh
