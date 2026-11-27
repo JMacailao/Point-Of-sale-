@@ -41,7 +41,7 @@ begin
        'list_movements','list_products','list_roles','list_sale_cashiers','list_sales','lookup_product',
        'process_sale','record_auth_event','refund_sale','sales_report','save_category','save_expense',
        'save_product','set_product_active','update_my_profile','update_store_member','update_store_settings',
-       'user_activity','void_expense','get_menu','save_menu','reset_menu_link','get_public_menu','register_store','set_member_access')
+       'user_activity','void_expense','sales_by_item','get_menu','save_menu','reset_menu_link','get_public_menu','register_store','set_member_access')
   loop
     execute format('drop function if exists %s cascade', f.sig);
   end loop;

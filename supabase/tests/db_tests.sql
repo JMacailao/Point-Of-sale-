@@ -279,6 +279,29 @@ select test_helpers.assert((select count(*) > 0 from sales), 'cashier sees own s
 select test_helpers.assert((select bool_and(cashier_id = app.current_profile_id()) from sales), 'cashier sees only own sales');
 rollback;
 
+\echo '10b. sales by item report'
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
+set local role anon;
+insert into test_helpers.vars select 'byitem', public.sales_by_item(v::uuid, current_date - 1, current_date + 1, false)::text from test_helpers.vars where k='store1';
+select test_helpers.assert((select jsonb_array_length(v::jsonb -> 'rows') = 2 from test_helpers.vars where k='byitem'), 'two items listed');
+-- completed: sale2 = 5 x cola @20.00 (cost 12.50); sale3 = 2 x bread @45.50 (cost 30.00); refunded sale1 = 3 cola + 2 bread
+select test_helpers.assert((select (r ->> 'quantity')::int = 5 and (r ->> 'sales')::numeric = 100 and (r ->> 'cost')::numeric = 62.5
+  and (r ->> 'profit')::numeric = 37.5 and (r ->> 'refunded_quantity')::int = 3 and (r ->> 'transactions')::int = 1
+  and (r ->> 'average_price')::numeric = 20
+  from test_helpers.vars, jsonb_array_elements(v::jsonb -> 'rows') r where k='byitem' and r ->> 'sku' = 'COLA-330'), 'cola row');
+select test_helpers.assert((select (r ->> 'quantity')::int = 2 and (r ->> 'sales')::numeric = 91 and (r ->> 'refunded_quantity')::int = 2
+  from test_helpers.vars, jsonb_array_elements(v::jsonb -> 'rows') r where k='byitem' and r ->> 'sku' = 'BREAD'), 'bread row');
+select test_helpers.assert((select (v::jsonb -> 'rows' -> 0 ->> 'sku') = 'COLA-330' from test_helpers.vars where k='byitem'), 'sorted by sales');
+select test_helpers.assert((select (v::jsonb -> 'totals' ->> 'quantity')::int = 7 and (v::jsonb -> 'totals' ->> 'sales')::numeric = 191
+  and (v::jsonb -> 'totals' ->> 'discounts')::numeric = 11 from test_helpers.vars where k='byitem'), 'by-item totals');
+commit;
+begin;
+select set_config('request.jwt.claims', test_helpers.claims('uid-cashier'), true);
+set local role anon;
+select test_helpers.expect_error(format($$select public.sales_by_item(%L, current_date, current_date)$$, (select v from test_helpers.vars where k='store1')), 'FORBIDDEN');
+rollback;
+
 \echo '11. role protections: self-modification and last administrator'
 begin;
 select set_config('request.jwt.claims', test_helpers.claims('uid-admin'), true);
